@@ -238,20 +238,6 @@ func (db *DonutDB) ListGlobalTablesWithContext(context.Context, *dynamodb.ListGl
 	return nil, ToBeImplementedErr
 }
 
-func (db *DonutDB) ListTables(*dynamodb.ListTablesInput) (*dynamodb.ListTablesOutput, error) {
-	return nil, ToBeImplementedErr
-}
-func (db *DonutDB) ListTablesWithContext(context.Context, *dynamodb.ListTablesInput, ...request.Option) (*dynamodb.ListTablesOutput, error) {
-	return nil, ToBeImplementedErr
-}
-
-func (db *DonutDB) ListTablesPages(*dynamodb.ListTablesInput, func(*dynamodb.ListTablesOutput, bool) bool) error {
-	return ToBeImplementedErr
-}
-func (db *DonutDB) ListTablesPagesWithContext(context.Context, *dynamodb.ListTablesInput, func(*dynamodb.ListTablesOutput, bool) bool, ...request.Option) error {
-	return ToBeImplementedErr
-}
-
 func (db *DonutDB) ListTagsOfResource(*dynamodb.ListTagsOfResourceInput) (*dynamodb.ListTagsOfResourceOutput, error) {
 	return nil, ToBeImplementedErr
 }

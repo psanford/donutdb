@@ -6,28 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
-type attributeType int
-
-const (
-	stringAttribute attributeType = 1 + iota
-	numberAttribute
-	binaryAttribute
-	boolAttribute
-	binarySetAttribute
-	listAttribute
-	mapAttribute
-	numberSetAttribute
-	nullAttribute
-	stringSetAttribute
-)
-
-type attribute struct {
-	attributeType attributeType
-}
+const defaultHashFunction = "murmur3"
 
 func (db *DonutDB) CreateTable(input *dynamodb.CreateTableInput) (*dynamodb.CreateTableOutput, error) {
 	return db.CreateTableWithContext(context.Background(), input)
@@ -183,10 +167,8 @@ VALUES (?,?,?,?,?,?,?)`,
 	return nil, nil
 }
 
-const defaultHashFunction = "murmur3"
-
 func (db *DonutDB) listTables() ([]string, error) {
-	rows, err := db.db.Query("SELECT name FROM __donutdb_table_metadata")
+	rows, err := db.db.Query("SELECT name FROM __donutdb_table_metadata order by name")
 	if err != nil {
 		return nil, err
 	}
@@ -207,4 +189,104 @@ func (db *DonutDB) listTables() ([]string, error) {
 	}
 
 	return tables, nil
+}
+
+func (db *DonutDB) ListTables(input *dynamodb.ListTablesInput) (*dynamodb.ListTablesOutput, error) {
+	return db.ListTablesWithContext(context.Background(), input)
+}
+func (db *DonutDB) ListTablesWithContext(ctx context.Context, input *dynamodb.ListTablesInput, opts ...request.Option) (*dynamodb.ListTablesOutput, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+
+	var limit int
+	if input.Limit != nil {
+		limit = int(*input.Limit)
+	}
+
+	if limit < 1 || limit > 100 {
+		// dynamodb api says max size for returned TableNames is 100
+		limit = 100
+	}
+
+	var startTableName string
+	if input.ExclusiveStartTableName != nil {
+		startTableName = *input.ExclusiveStartTableName
+	}
+
+	tables, err := db.listTables()
+	if err != nil {
+		return nil, err
+	}
+
+	startIdx := 0
+	if startTableName != "" {
+		for startIdx = 0; startIdx < len(tables); startIdx++ {
+			if tables[startIdx] == startTableName {
+				startIdx++
+				break
+			}
+		}
+	}
+
+	output := dynamodb.ListTablesOutput{
+		TableNames: make([]*string, 0),
+	}
+	if startIdx >= len(tables) {
+		// we've seeked to the end, no more tables to return
+		return &output, nil
+	}
+
+	var lastTableIdx int
+	for i := 0; i+startIdx < len(tables) && i < limit; i++ {
+		idx := i + startIdx
+
+		tblName := tables[idx]
+
+		output.TableNames = append(output.TableNames, &tblName)
+		lastTableIdx = idx
+	}
+
+	if lastTableIdx < len(tables)-1 {
+		output.LastEvaluatedTableName = aws.String(tables[lastTableIdx])
+	}
+
+	return &output, nil
+}
+
+func (db *DonutDB) ListTablesPages(input *dynamodb.ListTablesInput, f func(*dynamodb.ListTablesOutput, bool) bool) error {
+	return db.ListTablesPagesWithContext(context.Background(), input, f)
+}
+func (db *DonutDB) ListTablesPagesWithContext(ctx context.Context, input *dynamodb.ListTablesInput, cb func(*dynamodb.ListTablesOutput, bool) bool, opts ...request.Option) error {
+
+	origInput := input
+	input = &dynamodb.ListTablesInput{}
+	if origInput.ExclusiveStartTableName != nil {
+		input.ExclusiveStartTableName = aws.String(*origInput.ExclusiveStartTableName)
+	}
+	if origInput.Limit != nil {
+		input.Limit = aws.Int64(*origInput.Limit)
+	}
+
+	for i := 0; ; i++ {
+		out, err := db.ListTablesWithContext(ctx, input)
+		if err != nil {
+			return err
+		}
+
+		var last bool
+		if out.LastEvaluatedTableName == nil || *out.LastEvaluatedTableName == "" {
+			last = true
+		}
+
+		stop := cb(out, last)
+
+		if last || stop {
+			break
+		}
+
+		input.ExclusiveStartTableName = out.LastEvaluatedTableName
+	}
+
+	return nil
 }
