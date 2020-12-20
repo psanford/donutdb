@@ -91,6 +91,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok\n"))
 }
 
+var nowFunc = time.Now
+
 func (s *Server) verifyRequest(origRequest *http.Request, body []byte) error {
 	r := origRequest.Clone(context.Background())
 
@@ -112,6 +114,15 @@ func (s *Server) verifyRequest(origRequest *http.Request, body []byte) error {
 	ts, err := time.Parse(timeFormat, dateStr)
 	if err != nil {
 		return errors.New("Bad x-amz-date header")
+	}
+
+	now := nowFunc()
+	delta := now.Sub(ts)
+	if delta > 5*time.Minute {
+		return errors.New("x-amz-date too old")
+	}
+	if delta < -5*time.Minute {
+		return errors.New("x-amz-date too far into the future")
 	}
 
 	authHeader, err := parseAuthHeader(r.Header.Get("authorization"))
@@ -141,8 +152,10 @@ func (s *Server) verifyRequest(origRequest *http.Request, body []byte) error {
 		Config: aws.Config{
 			Credentials: creds,
 			Region:      &region,
-			LogLevel:    aws.LogLevel(aws.LogDebugWithSigning),
-			Logger:      aws.NewDefaultLogger(),
+
+			// uncomment for signature logging details
+			// LogLevel:    aws.LogLevel(aws.LogDebugWithSigning),
+			// Logger:      aws.NewDefaultLogger(),
 		},
 		ClientInfo: metadata.ClientInfo{
 			ServiceName: "dynamodb",

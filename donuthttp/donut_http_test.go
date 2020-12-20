@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestVerifySignature(t *testing.T) {
@@ -16,7 +17,16 @@ func TestVerifySignature(t *testing.T) {
 	body := []byte("{}")
 
 	r := mkReq(body)
-	err := s.verifyRequest(r, body)
+	ts, err := time.Parse(timeFormat, r.Header.Get("x-amz-date"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nowFunc = func() time.Time {
+		return ts.Add(4 * time.Minute)
+	}
+
+	err = s.verifyRequest(r, body)
 	if err != nil {
 		t.Fatalf("verifyRequest failed: %s", err)
 	}
