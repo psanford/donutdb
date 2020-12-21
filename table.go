@@ -22,6 +22,14 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
 		return nil, err
 	}
 
+	if input.BillingMode == nil || *input.BillingMode == "PROVISIONED" {
+		if input.ProvisionedThroughput == nil {
+			return nil, validationErr("No provisioned throughput specified for the table")
+		}
+	} else if *input.BillingMode != "PAY_PER_REQUEST" {
+		return nil, validationErr("Unknown BillingMode")
+	}
+
 	tableName := *input.TableName
 
 	tables, err := db.listTables()
@@ -31,7 +39,7 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
 
 	for _, existing := range tables {
 		if existing == tableName {
-			return nil, resourceInUseErr{msg: "Cannot create preexisting table"}
+			return nil, resourceInUseErr("Cannot create preexisting table")
 		}
 	}
 
@@ -173,6 +181,9 @@ VALUES (?,?,?,?,?,?,?)`,
 			KeySchema:            input.KeySchema,
 			TableName:            &tableName,
 			ItemCount:            aws.Int64(0),
+			TableArn:             aws.String("arn:aws:dynamodb:donutdb:000000000000:table/" + tableName),
+			TableSizeBytes:       aws.Int64(0),
+			TableStatus:          aws.String("ACTIVE"),
 		},
 	}
 

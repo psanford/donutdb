@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/private/protocol/json/jsonutil"
 	"github.com/felixge/httpsnoop"
 	"github.com/psanford/donutdb"
 	"github.com/psanford/donutdb/logger"
@@ -152,7 +153,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	outJson, err := json.Marshal(result)
+	outJson, err := jsonutil.BuildJSON(result)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return

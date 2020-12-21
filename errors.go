@@ -12,24 +12,40 @@ var ToBeImplementedErr = errors.New("method needs to be implemented")
 
 var dynamoDBerrPrefix = "com.amazonaws.dynamodb.v20120810#"
 
-type resourceInUseErr struct {
-	msg string
+func resourceInUseErr(msg string) apiErr {
+	return apiErr{
+		typ:  "ResourceInUseException",
+		msg:  msg,
+		code: 400,
+	}
 }
 
-func (e resourceInUseErr) Error() string {
+func validationErr(msg string) apiErr {
+	return apiErr{
+		typ:  "ValidationException",
+		msg:  msg,
+		code: 400,
+	}
+}
+
+type apiErr struct {
+	typ  string
+	msg  string
+	code int
+}
+
+func (e apiErr) Error() string {
 	return e.msg
 }
 
-func (e resourceInUseErr) MarshalJSON() ([]byte, error) {
-	typ := "ResourceInUseException"
-
+func (e apiErr) MarshalJSON() ([]byte, error) {
 	res := []byte(fmt.Sprintf(`{"__type":"%s%s","message":%s}`,
-		dynamoDBerrPrefix, typ, strconv.Quote(e.msg)))
+		dynamoDBerrPrefix, e.typ, strconv.Quote(e.msg)))
 
 	return res, nil
 }
 
-func (e resourceInUseErr) HTTPCode() int {
+func (e apiErr) HTTPCode() int {
 	return 400
 }
 
