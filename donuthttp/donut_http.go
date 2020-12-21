@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/psanford/donutdb/api"
+	"github.com/felixge/httpsnoop"
+	"github.com/psanford/donutdb"
 	"github.com/psanford/donutdb/logger"
 )
 
@@ -30,13 +31,16 @@ type Server struct {
 	InsecureDisableAuth bool
 	Region              string
 	Logger              logger.Logger
+	LogLevel            logger.LogLevelType
 
-	db *api.DBState
+	DB *donutdb.DonutDB
 }
 
-func NewServer() *Server {
+func NewServer(db *donutdb.DonutDB) *Server {
 	return &Server{
 		Listener: newLocalListener(),
+		DB:       db,
+		LogLevel: logger.LogHTTPRequests,
 	}
 }
 
@@ -44,8 +48,6 @@ func (s *Server) Start() {
 	if s.URL != "" {
 		panic("Server already started")
 	}
-
-	s.db = api.New()
 
 	s.URL = "http://" + s.Listener.Addr().String()
 	go s.run()
@@ -59,9 +61,43 @@ func (s *Server) Close() {
 func (s *Server) run() {
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleRequest)
+	mux.HandleFunc("/", s.loggingMiddleware(s.handleRequest))
 
 	http.Serve(s.Listener, mux)
+}
+
+func (s *Server) loggingMiddleware(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Logger == nil {
+			handler(w, r)
+			return
+		}
+
+		if s.LogLevel&logger.LogHTTPRequests == 0 {
+			handler(w, r)
+			return
+		}
+
+		url := *r.URL
+		host := r.Host
+		remoteAddr := r.RemoteAddr
+		target := r.Header.Get("X-Amz-Target")
+
+		var metrics httpsnoop.Metrics
+		defer func() {
+			if s.LogLevel&logger.LogHTTPRequests == logger.LogHTTPRequests {
+				logger.LogFields(s.Logger,
+					"evt", "http_request",
+					"host", host, "url", url.String(), "target", target, "remote_addr", remoteAddr,
+					"status_code", metrics.Code, "duration_ms", metrics.Duration.Milliseconds(),
+					"bytes_written", metrics.Written,
+				)
+			}
+		}()
+
+		metrics = httpsnoop.CaptureMetrics(handler, w, r)
+	}
+
 }
 
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +111,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		err := s.verifyRequest(r, body)
 		if err != nil {
 			if s.Logger != nil {
-				s.Logger.Log("invalid request err:", err)
+				s.Logger.Log("evt", "invalid_request_err", "err", err)
 			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -101,9 +137,18 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	method := parts[1]
 
-	result, err := s.db.Dispatch(method, body)
+	result, err := s.DB.Dispatch(method, body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if dbErr, ok := err.(donutdb.HTTPError); ok {
+			out, err := json.Marshal(dbErr)
+			if err != nil {
+				http.Error(w, "Marshal response err", http.StatusInternalServerError)
+				return
+			}
+			http.Error(w, string(out), dbErr.HTTPCode())
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 

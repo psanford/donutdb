@@ -2,7 +2,6 @@ package donutdb
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -32,7 +31,7 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
 
 	for _, existing := range tables {
 		if existing == tableName {
-			return nil, errors.New("table already exists")
+			return nil, resourceInUseErr{msg: "Cannot create preexisting table"}
 		}
 	}
 
@@ -156,15 +155,28 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
 		}
 	}
 
+	creationEpoch := time.Now().Unix()
+	creationTS := time.Unix(creationEpoch, 0)
+
 	_, err = db.db.Exec(`INSERT INTO __donutdb_table_metadata
 (name, creation_epoch, hash_key, hash_key_type, range_key, range_key_type, hash_function)
 VALUES (?,?,?,?,?,?,?)`,
-		tableName, time.Now().Unix(), hashKey, hashKeyType, rangeKey, rangeKeyType, defaultHashFunction)
+		tableName, creationEpoch, hashKey, hashKeyType, rangeKey, rangeKeyType, defaultHashFunction)
 	if err != nil {
 		return nil, fmt.Errorf("update metadata err: %w", err)
 	}
 
-	return nil, nil
+	result := dynamodb.CreateTableOutput{
+		TableDescription: &dynamodb.TableDescription{
+			CreationDateTime:     &creationTS,
+			AttributeDefinitions: input.AttributeDefinitions,
+			KeySchema:            input.KeySchema,
+			TableName:            &tableName,
+			ItemCount:            aws.Int64(0),
+		},
+	}
+
+	return &result, nil
 }
 
 func (db *DonutDB) listTables() ([]string, error) {
