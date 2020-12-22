@@ -28,6 +28,18 @@ func validationErr(msg string) apiErr {
 	}
 }
 
+func resourceNotFoundErr(msg string) apiErr {
+	return apiErr{
+		typ:  "ResourceNotFoundException",
+		msg:  msg,
+		code: 400,
+	}
+}
+
+func fieldNotImplementedErr(field string) error {
+	return fmt.Errorf("%s not yet implemented in DonutDB", field)
+}
+
 type apiErr struct {
 	typ  string
 	msg  string

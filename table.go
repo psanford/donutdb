@@ -137,11 +137,11 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
 
 	} else {
 		stmtTxt := fmt.Sprintf(`CREATE TABLE '%s' (
-    donut_db_hash_key TEXT,
+    donutdb_hash_key TEXT,
     '%s' %s,
     '%s' %s,
     donutdb_data BLOB,
-    PRIMARY KEY (donut_db_hash_key, '%s')
+    PRIMARY KEY (donutdb_hash_key, '%s')
   )`, tableName, hashKey, hashKeyType, rangeKey, rangeKeyType, hashKey)
 		// use prepare to avoid executing more than one statement (a.la sql injection)
 		stmt, err := db.db.Prepare(stmtTxt)

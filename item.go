@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,25 +21,24 @@ func (db *DonutDB) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutpu
 	return db.PutItemWithContext(context.Background(), input)
 }
 func (db *DonutDB) PutItemWithContext(ctx context.Context, input *dynamodb.PutItemInput, opts ...request.Option) (*dynamodb.PutItemOutput, error) {
-
 	if err := input.Validate(); err != nil {
 		return nil, err
 	}
 
 	if input.ConditionExpression != nil {
-		return nil, errors.New("ConditionExpresion not yet implemented in DonutDB")
+		return nil, fieldNotImplementedErr("ConditionExpression")
 	}
 
 	if input.ConditionalOperator != nil {
-		return nil, errors.New("ConditionalOperator not yet implemented in DonutDB")
+		return nil, fieldNotImplementedErr("ConditionalOperator")
 	}
 
 	if input.Expected != nil {
-		return nil, errors.New("Expected not yet implemented in DonutDB")
+		return nil, fieldNotImplementedErr("Expected")
 	}
 
 	if input.ExpressionAttributeNames != nil || input.ExpressionAttributeValues != nil {
-		return nil, errors.New("ExpressionAttributes not yet implemented in DonutDB")
+		return nil, fieldNotImplementedErr("ExpressionAttributes")
 
 	}
 
@@ -67,6 +67,11 @@ func (db *DonutDB) PutItemWithContext(ctx context.Context, input *dynamodb.PutIt
 		return nil, fmt.Errorf("hash key err: %w", err)
 	}
 
+	tx, err := db.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+
 	args := []interface{}{
 		hashedKey,
 		keyVal,
@@ -81,23 +86,22 @@ func (db *DonutDB) PutItemWithContext(ctx context.Context, input *dynamodb.PutIt
 		args = append(args, rangeKey)
 	}
 
-	tx, err := db.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-
 	var oldItem map[string]*dynamodb.AttributeValue
 	if input.ReturnValues != nil && *input.ReturnValues == "ALL_OLD" {
-		args := []interface{}{
+		queryArgs := []interface{}{
 			hashedKey,
 			keyVal,
 		}
+		rangeKeyCol := tbl.RangeKey
 		if tbl.RangeKey != "" {
-			args = append(args, rangeKey)
+			queryArgs = append(queryArgs, rangeKey)
+		} else {
+			rangeKeyCol = "1"
+			queryArgs = append(queryArgs, 1)
 		}
-		query := fmt.Sprintf("SELECT donutdb_data from %s where donutdb_hash_key=? and '%s'=? and '%s'=?",
-			tbl.Name, tbl.HashKey, tbl.RangeKey)
-		row := tx.QueryRow(query, args...)
+		query := fmt.Sprintf("SELECT donutdb_data from %s where donutdb_hash_key=? and %s=? and %s=?",
+			tbl.Name, tbl.HashKey, rangeKeyCol)
+		row := tx.QueryRow(query, queryArgs...)
 		var oldItemJSON []byte
 		err = row.Scan(&oldItemJSON)
 		if err == sql.ErrNoRows {
@@ -140,28 +144,114 @@ func (db *DonutDB) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutpu
 	return db.GetItemWithContext(context.Background(), input)
 }
 func (db *DonutDB) GetItemWithContext(ctx context.Context, input *dynamodb.GetItemInput, opts ...request.Option) (*dynamodb.GetItemOutput, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
 
-	return nil, ToBeImplementedErr
+	if input.AttributesToGet != nil {
+		return nil, fieldNotImplementedErr("AttributesToGet")
+	}
+	if input.ConsistentRead != nil {
+		return nil, fieldNotImplementedErr("ConsistentRead")
+	}
+	if input.ExpressionAttributeNames != nil {
+		return nil, fieldNotImplementedErr("ExpressionAttributeNames")
+	}
+	if input.ProjectionExpression != nil {
+		return nil, fieldNotImplementedErr("ProjectionExpression")
+	}
+	if input.ReturnConsumedCapacity != nil {
+		return nil, fieldNotImplementedErr("ReturnConsumedCapacity")
+	}
+
+	tbl, err := db.getTableMetadata(*input.TableName)
+	if err == sql.ErrNoRows {
+		return nil, validationErr("no such table")
+	} else if err != nil {
+		return nil, err
+	}
+
+	hashKeyAttr := input.Key[tbl.HashKey]
+	if hashKeyAttr == nil {
+		return nil, validationErr("missing hash key")
+	}
+	var rangeKeyAttr *dynamodb.AttributeValue
+
+	if tbl.RangeKey != "" {
+		rangeKeyAttr = input.Key[tbl.RangeKey]
+		if rangeKeyAttr == nil {
+			return nil, validationErr("missing range key")
+		}
+	}
+
+	hashedKey, keyVal, err := hashKeyBytes(hashKeyAttr, tbl.HashKeyType)
+	if err != nil {
+		return nil, fmt.Errorf("hash key err: %w", err)
+	}
+
+	args := []interface{}{
+		hashedKey,
+		keyVal,
+	}
+	var rangeKey interface{}
+	var rangeKeyCol string
+
+	if tbl.RangeKey != "" {
+		rangeKeyCol = tbl.RangeKey
+		rangeKey, err = rangeKeyI(rangeKeyAttr, tbl.RangeKeyType)
+		if err != nil {
+			return nil, fmt.Errorf("range key err: %w", err)
+		}
+		args = append(args, rangeKey)
+	} else {
+		rangeKeyCol = "1"
+		rangeKey = 1
+		args = append(args, rangeKey)
+	}
+
+	var item map[string]*dynamodb.AttributeValue
+	query := fmt.Sprintf("SELECT donutdb_data from %s where donutdb_hash_key=? and %s=? and %s=?",
+		tbl.Name, tbl.HashKey, rangeKeyCol)
+
+	row := db.db.QueryRow(query, args...)
+	var itemJSON []byte
+	err = row.Scan(&itemJSON)
+	if err == sql.ErrNoRows {
+		return nil, resourceNotFoundErr("item not found")
+	} else if err != nil {
+		return nil, err
+	}
+
+	err = json.Unmarshal(itemJSON, &item)
+	if err != nil {
+		return nil, fmt.Errorf("corrupt item in db: %w", err)
+	}
+
+	out := dynamodb.GetItemOutput{
+		Item: item,
+	}
+
+	return &out, nil
 }
 
-func hashKeyBytes(keyAttr *dynamodb.AttributeValue, typ string) ([]byte, interface{}, error) {
+func hashKeyBytes(keyAttr *dynamodb.AttributeValue, typ string) (string, interface{}, error) {
 	var hashBytes []byte
 	var key interface{}
 
 	switch typ {
 	case "TEXT":
 		if keyAttr.S == nil {
-			return nil, nil, errors.New("invalid type for string key")
+			return "", nil, errors.New("invalid type for string key")
 		}
 		hashBytes = []byte(*keyAttr.S)
 		key = *keyAttr.S
 	case "REAL":
 		if keyAttr.N == nil {
-			return nil, nil, errors.New("invalid type for numeric key")
+			return "", nil, errors.New("invalid type for numeric key")
 		}
 		f, err := strconv.ParseFloat(*keyAttr.N, 64)
 		if err != nil {
-			return nil, nil, errors.New("non-numeric value for numeric key")
+			return "", nil, errors.New("non-numeric value for numeric key")
 		}
 
 		hashBytes = make([]byte, 8)
@@ -170,17 +260,17 @@ func hashKeyBytes(keyAttr *dynamodb.AttributeValue, typ string) ([]byte, interfa
 		key = f
 	case "BLOB":
 		if keyAttr.B == nil {
-			return nil, nil, errors.New("invalid type for binary key")
+			return "", nil, errors.New("invalid type for binary key")
 		}
 		hashBytes = keyAttr.B
 		key = keyAttr.B
 	default:
-		return nil, nil, errors.New("unexpected hash key type in database")
+		return "", nil, errors.New("unexpected hash key type in database")
 	}
 
 	hasher := murmur3.New64()
 	hasher.Write(hashBytes)
-	return hasher.Sum(nil), key, nil
+	return hex.EncodeToString(hasher.Sum(nil)), key, nil
 }
 
 func rangeKeyI(keyAttr *dynamodb.AttributeValue, typ string) (interface{}, error) {

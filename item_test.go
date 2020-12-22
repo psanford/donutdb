@@ -1,33 +1,102 @@
 package donutdb
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/google/go-cmp/cmp"
 )
 
-func TestPutItem(t *testing.T) {
+func TestPutItemHashKey(t *testing.T) {
 	dbt := mkDB()
 
 	key1 := "proton-Tolyatti"
 
-	_, err := dbt.db.PutItem(&dynamodb.PutItemInput{
-		TableName: &dbt.hashTable,
-		Item: map[string]*dynamodb.AttributeValue{
-			"hash_key": &dynamodb.AttributeValue{
-				S: &key1,
-			},
-			"val1": &dynamodb.AttributeValue{
-				S: aws.String("Cory-TensorFlow"),
-			},
+	item1 := map[string]*dynamodb.AttributeValue{
+		"hash_key": {
+			S: &key1,
 		},
+		"val1": {
+			S: aws.String("Cory-TensorFlow"),
+		},
+	}
+
+	_, err := dbt.db.PutItem(&dynamodb.PutItemInput{
+		TableName:    &dbt.hashTable,
+		Item:         item1,
+		ReturnValues: aws.String("ALL_OLD"),
 	})
 
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	out, err := dbt.db.GetItem(&dynamodb.GetItemInput{
+		TableName: &dbt.hashTable,
+		Key: map[string]*dynamodb.AttributeValue{
+			"hash_key": {
+				S: &key1,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(item1, out.Item); diff != "" {
+		t.Fatalf("item1 mismatch: %s", diff)
+	}
+}
+
+func TestPutItemHashRangeKey(t *testing.T) {
+	dbt := mkDB()
+
+	hk := "analgesics-patrimony"
+	rk := 301.516
+	rkStr := fmt.Sprintf("%f", rk)
+
+	item1 := map[string]*dynamodb.AttributeValue{
+		"hash_key": {
+			S: &hk,
+		},
+		"range_key": {
+			N: &rkStr,
+		},
+		"val1": {
+			S: aws.String("attaining-Guernsey"),
+		},
+	}
+
+	_, err := dbt.db.PutItem(&dynamodb.PutItemInput{
+		TableName:    &dbt.hashRangeTable,
+		Item:         item1,
+		ReturnValues: aws.String("ALL_OLD"),
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := dbt.db.GetItem(&dynamodb.GetItemInput{
+		TableName: &dbt.hashRangeTable,
+		Key: map[string]*dynamodb.AttributeValue{
+			"hash_key": {
+				S: &hk,
+			},
+			"range_key": {
+				N: &rkStr,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(item1, out.Item); diff != "" {
+		t.Fatalf("item1 mismatch: %s", diff)
+	}
 }
 
 type testDB struct {
