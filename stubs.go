@@ -189,13 +189,6 @@ func (db *DonutDB) ExportTableToPointInTimeWithContext(context.Context, *dynamod
 	return nil, ToBeImplementedErr
 }
 
-func (db *DonutDB) GetItem(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-	return nil, ToBeImplementedErr
-}
-func (db *DonutDB) GetItemWithContext(context.Context, *dynamodb.GetItemInput, ...request.Option) (*dynamodb.GetItemOutput, error) {
-	return nil, ToBeImplementedErr
-}
-
 func (db *DonutDB) ListBackups(*dynamodb.ListBackupsInput) (*dynamodb.ListBackupsOutput, error) {
 	return nil, ToBeImplementedErr
 }
@@ -242,13 +235,6 @@ func (db *DonutDB) ListTagsOfResource(*dynamodb.ListTagsOfResourceInput) (*dynam
 	return nil, ToBeImplementedErr
 }
 func (db *DonutDB) ListTagsOfResourceWithContext(context.Context, *dynamodb.ListTagsOfResourceInput, ...request.Option) (*dynamodb.ListTagsOfResourceOutput, error) {
-	return nil, ToBeImplementedErr
-}
-
-func (db *DonutDB) PutItem(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-	return nil, ToBeImplementedErr
-}
-func (db *DonutDB) PutItemWithContext(context.Context, *dynamodb.PutItemInput, ...request.Option) (*dynamodb.PutItemOutput, error) {
 	return nil, ToBeImplementedErr
 }
 

@@ -7,4 +7,5 @@ require (
 	github.com/felixge/httpsnoop v1.0.1
 	github.com/google/go-cmp v0.5.4
 	github.com/mattn/go-sqlite3 v1.14.5
+	github.com/twmb/murmur3 v1.1.5
 )

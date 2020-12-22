@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
-const defaultHashFunction = "murmur3"
+const defaultHashFunction = "murmur3_64"
 
 func (db *DonutDB) CreateTable(input *dynamodb.CreateTableInput) (*dynamodb.CreateTableOutput, error) {
 	return db.CreateTableWithContext(context.Background(), input)
@@ -123,7 +123,7 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
 		stmtTxt := fmt.Sprintf(`CREATE TABLE '%s' (
     donutdb_hash_key TEXT PRIMARY KEY,
     '%s' '%s',
-    data BLOB
+    donutdb_data BLOB
   )`, tableName, hashKey, hashKeyType)
 		// use prepare to avoid executing more than one statement (a.la sql injection)
 		stmt, err := db.db.Prepare(stmtTxt)
@@ -140,7 +140,7 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
     donut_db_hash_key TEXT,
     '%s' %s,
     '%s' %s,
-    data BLOB,
+    donutdb_data BLOB,
     PRIMARY KEY (donut_db_hash_key, '%s')
   )`, tableName, hashKey, hashKeyType, rangeKey, rangeKeyType, hashKey)
 		// use prepare to avoid executing more than one statement (a.la sql injection)
@@ -312,4 +312,26 @@ func (db *DonutDB) ListTablesPagesWithContext(ctx context.Context, input *dynamo
 	}
 
 	return nil
+}
+
+type tableMetadata struct {
+	Name          string
+	CreationEpoch int
+	HashKey       string
+	HashKeyType   string
+	RangeKey      string
+	RangeKeyType  string
+	HashFunction  string
+}
+
+func (db *DonutDB) getTableMetadata(table string) (*tableMetadata, error) {
+	row := db.db.QueryRow("SELECT name,creation_epoch,hash_key,hash_key_type,range_key,range_key_type,hash_function FROM __donutdb_table_metadata where name = ?", table)
+
+	var tbl tableMetadata
+	err := row.Scan(&tbl.Name, &tbl.CreationEpoch, &tbl.HashKey, &tbl.HashKeyType, &tbl.RangeKey, &tbl.RangeKeyType, &tbl.HashFunction)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tbl, nil
 }
