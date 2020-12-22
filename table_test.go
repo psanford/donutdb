@@ -10,7 +10,7 @@ import (
 )
 
 func TestCreateTable(t *testing.T) {
-	db := mkDB()
+	db := mkEmptyDB()
 
 	var (
 		hashKey  = "contradicted-McDowell"
@@ -39,6 +39,7 @@ func TestCreateTable(t *testing.T) {
 				KeyType:       aws.String("RANGE"),
 			},
 		},
+		BillingMode: aws.String("PAY_PER_REQUEST"),
 	}
 
 	_, err := db.CreateTable(&input)
@@ -60,6 +61,7 @@ func TestCreateTable(t *testing.T) {
 				KeyType:       aws.String("HASH"),
 			},
 		},
+		BillingMode: aws.String("PAY_PER_REQUEST"),
 	}
 
 	_, err = db.CreateTable(&input2)
@@ -94,6 +96,7 @@ func TestCreateTable(t *testing.T) {
 				KeyType:       aws.String("HASH"),
 			},
 		},
+		BillingMode: aws.String("PAY_PER_REQUEST"),
 	}
 
 	_, err = db.CreateTable(&inputInvalid)
@@ -103,7 +106,7 @@ func TestCreateTable(t *testing.T) {
 }
 
 func TestListTables(t *testing.T) {
-	db := mkDB()
+	db := mkEmptyDB()
 	for i := 0; i < 499; i++ {
 
 		hashKey := "Nelly-adolescences"
@@ -121,6 +124,7 @@ func TestListTables(t *testing.T) {
 					KeyType:       aws.String("HASH"),
 				},
 			},
+			BillingMode: aws.String("PAY_PER_REQUEST"),
 		}
 
 		_, err := db.CreateTable(&input)
@@ -180,7 +184,7 @@ func TestListTables(t *testing.T) {
 
 }
 
-func mkDB() *DonutDB {
+func mkEmptyDB() *DonutDB {
 	sqldb, err := sql.Open("sqlite3", ":memory:?cache=shared")
 	if err != nil {
 		panic(err)
