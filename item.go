@@ -5,15 +5,14 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"strconv"
-	"strings"
 
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/psanford/donutdb/internal/donuterr"
+	"github.com/psanford/donutdb/internal/donutsql"
 	"github.com/twmb/murmur3"
 )
 
@@ -26,115 +25,58 @@ func (db *DonutDB) PutItemWithContext(ctx context.Context, input *dynamodb.PutIt
 	}
 
 	if input.ConditionExpression != nil {
-		return nil, fieldNotImplementedErr("ConditionExpression")
+		return nil, donuterr.FieldNotImplementedErr("ConditionExpression")
 	}
 
 	if input.ConditionalOperator != nil {
-		return nil, fieldNotImplementedErr("ConditionalOperator")
+		return nil, donuterr.FieldNotImplementedErr("ConditionalOperator")
 	}
 
 	if input.Expected != nil {
-		return nil, fieldNotImplementedErr("Expected")
+		return nil, donuterr.FieldNotImplementedErr("Expected")
 	}
 
 	if input.ExpressionAttributeNames != nil || input.ExpressionAttributeValues != nil {
-		return nil, fieldNotImplementedErr("ExpressionAttributes")
-
+		return nil, donuterr.FieldNotImplementedErr("ExpressionAttributes")
 	}
 
-	tbl, err := db.getTableMetadata(*input.TableName)
+	tbl, err := db.donutSQL.TableMetadata(*input.TableName)
 	if err == sql.ErrNoRows {
-		return nil, validationErr("no such table")
+		return nil, donuterr.ValidationErr("no such table")
 	} else if err != nil {
 		return nil, err
 	}
 
 	hashKeyAttr := input.Item[tbl.HashKey]
 	if hashKeyAttr == nil {
-		return nil, validationErr("missing hash key")
+		return nil, donuterr.ValidationErr("missing hash key")
 	}
 	var rangeKeyAttr *dynamodb.AttributeValue
 
 	if tbl.RangeKey != "" {
 		rangeKeyAttr = input.Item[tbl.RangeKey]
 		if rangeKeyAttr == nil {
-			return nil, validationErr("missing range key")
+			return nil, donuterr.ValidationErr("missing range key")
 		}
 	}
 
-	hashedKey, keyVal, err := hashKeyBytes(hashKeyAttr, tbl.HashKeyType)
-	if err != nil {
-		return nil, fmt.Errorf("hash key err: %w", err)
-	}
-
-	tx, err := db.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-
-	args := []interface{}{
-		hashedKey,
-		keyVal,
-	}
-	var rangeKey interface{}
+	var oldItem donutsql.Item
 
 	if tbl.RangeKey != "" {
-		rangeKey, err = rangeKeyI(rangeKeyAttr, tbl.RangeKeyType)
+		oldItem, err = db.donutSQL.InsertHR(tbl, hashKeyAttr, rangeKeyAttr, input.Item)
 		if err != nil {
-			return nil, fmt.Errorf("range key err: %w", err)
-		}
-		args = append(args, rangeKey)
-	}
-
-	var oldItem map[string]*dynamodb.AttributeValue
-	if input.ReturnValues != nil && *input.ReturnValues == "ALL_OLD" {
-		queryArgs := []interface{}{
-			hashedKey,
-			keyVal,
-		}
-		rangeKeyCol := tbl.RangeKey
-		if tbl.RangeKey != "" {
-			queryArgs = append(queryArgs, rangeKey)
-		} else {
-			rangeKeyCol = "1"
-			queryArgs = append(queryArgs, 1)
-		}
-		query := fmt.Sprintf("SELECT donutdb_data from %s where donutdb_hash_key=? and %s=? and %s=?",
-			tbl.Name, tbl.HashKey, rangeKeyCol)
-		row := tx.QueryRow(query, queryArgs...)
-		var oldItemJSON []byte
-		err = row.Scan(&oldItemJSON)
-		if err == sql.ErrNoRows {
-		} else if err != nil {
-			tx.Rollback()
 			return nil, err
-		} else {
-			err := json.Unmarshal(oldItemJSON, &oldItem)
-			if err != nil {
-				tx.Rollback()
-				return nil, fmt.Errorf("corrupt old item in db: %w", err)
-			}
+		}
+	} else {
+		oldItem, err = db.donutSQL.InsertH(tbl, hashKeyAttr, input.Item)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	marshalledItem, err := json.Marshal(input.Item)
-	if err != nil {
-		return nil, fmt.Errorf("marshal item err: %s", err)
-	}
-	args = append(args, marshalledItem)
-
-	qs := strings.Repeat("?,", len(args)-1) + "?"
-	stmt := fmt.Sprintf("INSERT OR REPLACE INTO %s VALUES (%s)", tbl.Name, qs)
-
-	tx.Exec(stmt, args...)
-
-	err = tx.Commit()
-	if err != nil {
-		return nil, fmt.Errorf("commit data err: %w", err)
-	}
-
-	output := dynamodb.PutItemOutput{
-		Attributes: oldItem,
+	var output dynamodb.PutItemOutput
+	if input.ReturnValues != nil && *input.ReturnValues == "ALL_OLD" {
+		output.Attributes = oldItem
 	}
 
 	return &output, nil
@@ -149,82 +91,40 @@ func (db *DonutDB) GetItemWithContext(ctx context.Context, input *dynamodb.GetIt
 	}
 
 	if input.AttributesToGet != nil {
-		return nil, fieldNotImplementedErr("AttributesToGet")
+		return nil, donuterr.FieldNotImplementedErr("AttributesToGet")
 	}
 	if input.ConsistentRead != nil {
-		return nil, fieldNotImplementedErr("ConsistentRead")
+		return nil, donuterr.FieldNotImplementedErr("ConsistentRead")
 	}
 	if input.ExpressionAttributeNames != nil {
-		return nil, fieldNotImplementedErr("ExpressionAttributeNames")
+		return nil, donuterr.FieldNotImplementedErr("ExpressionAttributeNames")
 	}
 	if input.ProjectionExpression != nil {
-		return nil, fieldNotImplementedErr("ProjectionExpression")
+		return nil, donuterr.FieldNotImplementedErr("ProjectionExpression")
 	}
 	if input.ReturnConsumedCapacity != nil {
-		return nil, fieldNotImplementedErr("ReturnConsumedCapacity")
+		return nil, donuterr.FieldNotImplementedErr("ReturnConsumedCapacity")
 	}
 
-	tbl, err := db.getTableMetadata(*input.TableName)
+	tbl, err := db.donutSQL.TableMetadata(*input.TableName)
 	if err == sql.ErrNoRows {
-		return nil, validationErr("no such table")
+		return nil, donuterr.ValidationErr("no such table")
 	} else if err != nil {
 		return nil, err
 	}
 
 	hashKeyAttr := input.Key[tbl.HashKey]
 	if hashKeyAttr == nil {
-		return nil, validationErr("missing hash key")
+		return nil, donuterr.ValidationErr("missing hash key")
 	}
-	var rangeKeyAttr *dynamodb.AttributeValue
+
+	var item donutsql.Item
 
 	if tbl.RangeKey != "" {
-		rangeKeyAttr = input.Key[tbl.RangeKey]
-		if rangeKeyAttr == nil {
-			return nil, validationErr("missing range key")
-		}
-	}
-
-	hashedKey, keyVal, err := hashKeyBytes(hashKeyAttr, tbl.HashKeyType)
-	if err != nil {
-		return nil, fmt.Errorf("hash key err: %w", err)
-	}
-
-	args := []interface{}{
-		hashedKey,
-		keyVal,
-	}
-	var rangeKey interface{}
-	var rangeKeyCol string
-
-	if tbl.RangeKey != "" {
-		rangeKeyCol = tbl.RangeKey
-		rangeKey, err = rangeKeyI(rangeKeyAttr, tbl.RangeKeyType)
-		if err != nil {
-			return nil, fmt.Errorf("range key err: %w", err)
-		}
-		args = append(args, rangeKey)
+		rangeKeyAttr := input.Key[tbl.RangeKey]
+		item, err = db.donutSQL.GetHR(tbl, hashKeyAttr, rangeKeyAttr)
 	} else {
-		rangeKeyCol = "1"
-		rangeKey = 1
-		args = append(args, rangeKey)
-	}
-
-	var item map[string]*dynamodb.AttributeValue
-	query := fmt.Sprintf("SELECT donutdb_data from %s where donutdb_hash_key=? and %s=? and %s=?",
-		tbl.Name, tbl.HashKey, rangeKeyCol)
-
-	row := db.db.QueryRow(query, args...)
-	var itemJSON []byte
-	err = row.Scan(&itemJSON)
-	if err == sql.ErrNoRows {
-		return nil, resourceNotFoundErr("item not found")
-	} else if err != nil {
-		return nil, err
-	}
-
-	err = json.Unmarshal(itemJSON, &item)
-	if err != nil {
-		return nil, fmt.Errorf("corrupt item in db: %w", err)
+		item, err = db.donutSQL.GetH(tbl, hashKeyAttr)
 	}
 
 	out := dynamodb.GetItemOutput{
@@ -232,6 +132,43 @@ func (db *DonutDB) GetItemWithContext(ctx context.Context, input *dynamodb.GetIt
 	}
 
 	return &out, nil
+}
+
+func (db *DonutDB) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
+	return db.DeleteItemWithContext(context.Background(), input)
+}
+func (db *DonutDB) DeleteItemWithContext(ctx context.Context, input *dynamodb.DeleteItemInput, opts ...request.Option) (*dynamodb.DeleteItemOutput, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+
+	if input.ConditionExpression != nil {
+		return nil, donuterr.FieldNotImplementedErr("ConditionExpression")
+	}
+	if input.ConditionalOperator != nil {
+		return nil, donuterr.FieldNotImplementedErr("ConditionalOperator")
+	}
+	if input.Expected != nil {
+		return nil, donuterr.FieldNotImplementedErr("Expected")
+	}
+	if input.ExpressionAttributeNames != nil || input.ExpressionAttributeValues != nil {
+		return nil, donuterr.FieldNotImplementedErr("ExpressionAttributes")
+	}
+	if input.ReturnConsumedCapacity != nil {
+		return nil, donuterr.FieldNotImplementedErr("ReturnConsumedCapacity")
+	}
+	if input.ReturnItemCollectionMetrics != nil {
+		return nil, donuterr.FieldNotImplementedErr("ReturnItemCollectionMetrics")
+	}
+
+	// tbl, err := db.getTableMetadata(*input.TableName)
+	// if err == sql.ErrNoRows {
+	// 	return nil, donuterr.ValidationErr("no such table")
+	// } else if err != nil {
+	// 	return nil, err
+	// }
+
+	return nil, donuterr.ToBeImplementedErr
 }
 
 func hashKeyBytes(keyAttr *dynamodb.AttributeValue, typ string) (string, interface{}, error) {

@@ -1,4 +1,4 @@
-package donutdb
+package donuterr
 
 import (
 	"errors"
@@ -12,52 +12,52 @@ var ToBeImplementedErr = errors.New("method needs to be implemented")
 
 var dynamoDBerrPrefix = "com.amazonaws.dynamodb.v20120810#"
 
-func resourceInUseErr(msg string) apiErr {
-	return apiErr{
+func ResourceInUseErr(msg string) APIErr {
+	return APIErr{
 		typ:  "ResourceInUseException",
 		msg:  msg,
 		code: 400,
 	}
 }
 
-func validationErr(msg string) apiErr {
-	return apiErr{
+func ValidationErr(msg string) APIErr {
+	return APIErr{
 		typ:  "ValidationException",
 		msg:  msg,
 		code: 400,
 	}
 }
 
-func resourceNotFoundErr(msg string) apiErr {
-	return apiErr{
+func ResourceNotFoundErr(msg string) APIErr {
+	return APIErr{
 		typ:  "ResourceNotFoundException",
 		msg:  msg,
 		code: 400,
 	}
 }
 
-func fieldNotImplementedErr(field string) error {
+func FieldNotImplementedErr(field string) error {
 	return fmt.Errorf("%s not yet implemented in DonutDB", field)
 }
 
-type apiErr struct {
+type APIErr struct {
 	typ  string
 	msg  string
 	code int
 }
 
-func (e apiErr) Error() string {
+func (e APIErr) Error() string {
 	return e.msg
 }
 
-func (e apiErr) MarshalJSON() ([]byte, error) {
+func (e APIErr) MarshalJSON() ([]byte, error) {
 	res := []byte(fmt.Sprintf(`{"__type":"%s%s","message":%s}`,
 		dynamoDBerrPrefix, e.typ, strconv.Quote(e.msg)))
 
 	return res, nil
 }
 
-func (e apiErr) HTTPCode() int {
+func (e APIErr) HTTPCode() int {
 	return 400
 }
 

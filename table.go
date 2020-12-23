@@ -8,9 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/psanford/donutdb/internal/donuterr"
 )
-
-const defaultHashFunction = "murmur3_64"
 
 func (db *DonutDB) CreateTable(input *dynamodb.CreateTableInput) (*dynamodb.CreateTableOutput, error) {
 	return db.CreateTableWithContext(context.Background(), input)
@@ -24,22 +23,22 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
 
 	if input.BillingMode == nil || *input.BillingMode == "PROVISIONED" {
 		if input.ProvisionedThroughput == nil {
-			return nil, validationErr("No provisioned throughput specified for the table")
+			return nil, donuterr.ValidationErr("No provisioned throughput specified for the table")
 		}
 	} else if *input.BillingMode != "PAY_PER_REQUEST" {
-		return nil, validationErr("Unknown BillingMode")
+		return nil, donuterr.ValidationErr("Unknown BillingMode")
 	}
 
 	tableName := *input.TableName
 
-	tables, err := db.listTables()
+	tables, err := db.donutSQL.ListTables()
 	if err != nil {
 		return nil, err
 	}
 
 	for _, existing := range tables {
 		if existing == tableName {
-			return nil, resourceInUseErr("Cannot create preexisting table")
+			return nil, donuterr.ResourceInUseErr("Cannot create preexisting table")
 		}
 	}
 
@@ -64,20 +63,10 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
 			return nil, fmt.Errorf("duplicate attribute %q", name)
 		}
 
-		var sqlType string
-
-		switch typ {
-		case "S":
-			sqlType = "TEXT"
-		case "N":
-			sqlType = "REAL"
-		case "B":
-			sqlType = "BLOB"
-		default:
+		if typ != "S" && typ != "N" && typ != "B" {
 			return nil, fmt.Errorf("invalid attributeType %q for %q. Must be S|N|B", typ, name)
 		}
-
-		attributes[name] = sqlType
+		attributes[name] = typ
 	}
 
 	if len(input.KeySchema) < 1 || len(input.KeySchema) > 2 {
@@ -119,60 +108,12 @@ func (db *DonutDB) CreateTableWithContext(ctx context.Context, input *dynamodb.C
 		return nil, fmt.Errorf("no HashKey defined for table")
 	}
 
-	if rangeKey == "" {
-		stmtTxt := fmt.Sprintf(`CREATE TABLE '%s' (
-    donutdb_hash_key TEXT PRIMARY KEY,
-    '%s' '%s',
-    donutdb_data BLOB
-  )`, tableName, hashKey, hashKeyType)
-		// use prepare to avoid executing more than one statement (a.la sql injection)
-		stmt, err := db.db.Prepare(stmtTxt)
-		if err != nil {
-			return nil, fmt.Errorf("create table err: %q %w", stmtTxt, err)
-		}
-		_, err = stmt.Exec()
-		if err != nil {
-			return nil, fmt.Errorf("create table err: %q %w", stmtTxt, err)
-		}
-
-	} else {
-		stmtTxt := fmt.Sprintf(`CREATE TABLE '%s' (
-    donutdb_hash_key TEXT,
-    '%s' %s,
-    '%s' %s,
-    donutdb_data BLOB,
-    PRIMARY KEY (donutdb_hash_key, '%s')
-  )`, tableName, hashKey, hashKeyType, rangeKey, rangeKeyType, hashKey)
-		// use prepare to avoid executing more than one statement (a.la sql injection)
-		stmt, err := db.db.Prepare(stmtTxt)
-		if err != nil {
-			return nil, fmt.Errorf("create table err: %q %w", stmtTxt, err)
-		}
-		_, err = stmt.Exec()
-		if err != nil {
-			return nil, fmt.Errorf("create table err: %w", err)
-		}
-
-		stmt, err = db.db.Prepare(fmt.Sprintf("CREATE INDEX range_key_idx on '%s' ('%s')", tableName, rangeKey))
-		if err != nil {
-			return nil, fmt.Errorf("create table err: %w", err)
-		}
-		_, err = stmt.Exec()
-		if err != nil {
-			return nil, fmt.Errorf("create table err: %w", err)
-		}
-	}
-
-	creationEpoch := time.Now().Unix()
-	creationTS := time.Unix(creationEpoch, 0)
-
-	_, err = db.db.Exec(`INSERT INTO __donutdb_table_metadata
-(name, creation_epoch, hash_key, hash_key_type, range_key, range_key_type, hash_function)
-VALUES (?,?,?,?,?,?,?)`,
-		tableName, creationEpoch, hashKey, hashKeyType, rangeKey, rangeKeyType, defaultHashFunction)
+	out, err := db.donutSQL.CreateTable(tableName, hashKey, hashKeyType, rangeKey, rangeKeyType)
 	if err != nil {
-		return nil, fmt.Errorf("update metadata err: %w", err)
+		return nil, err
 	}
+
+	creationTS := time.Unix(out.CreationEpoch, 0)
 
 	result := dynamodb.CreateTableOutput{
 		TableDescription: &dynamodb.TableDescription{
@@ -188,30 +129,6 @@ VALUES (?,?,?,?,?,?,?)`,
 	}
 
 	return &result, nil
-}
-
-func (db *DonutDB) listTables() ([]string, error) {
-	rows, err := db.db.Query("SELECT name FROM __donutdb_table_metadata order by name")
-	if err != nil {
-		return nil, err
-	}
-
-	var tables []string
-
-	for rows.Next() {
-		var name string
-		err = rows.Scan(&name)
-		if err != nil {
-			return nil, err
-		}
-		tables = append(tables, name)
-	}
-	err = rows.Close()
-	if err != nil {
-		return nil, err
-	}
-
-	return tables, nil
 }
 
 func (db *DonutDB) ListTables(input *dynamodb.ListTablesInput) (*dynamodb.ListTablesOutput, error) {
@@ -237,7 +154,7 @@ func (db *DonutDB) ListTablesWithContext(ctx context.Context, input *dynamodb.Li
 		startTableName = *input.ExclusiveStartTableName
 	}
 
-	tables, err := db.listTables()
+	tables, err := db.donutSQL.ListTables()
 	if err != nil {
 		return nil, err
 	}
@@ -312,26 +229,4 @@ func (db *DonutDB) ListTablesPagesWithContext(ctx context.Context, input *dynamo
 	}
 
 	return nil
-}
-
-type tableMetadata struct {
-	Name          string
-	CreationEpoch int
-	HashKey       string
-	HashKeyType   string
-	RangeKey      string
-	RangeKeyType  string
-	HashFunction  string
-}
-
-func (db *DonutDB) getTableMetadata(table string) (*tableMetadata, error) {
-	row := db.db.QueryRow("SELECT name,creation_epoch,hash_key,hash_key_type,range_key,range_key_type,hash_function FROM __donutdb_table_metadata where name = ?", table)
-
-	var tbl tableMetadata
-	err := row.Scan(&tbl.Name, &tbl.CreationEpoch, &tbl.HashKey, &tbl.HashKeyType, &tbl.RangeKey, &tbl.RangeKeyType, &tbl.HashFunction)
-	if err != nil {
-		return nil, err
-	}
-
-	return &tbl, nil
 }
