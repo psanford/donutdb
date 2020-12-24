@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/private/protocol/json/jsonutil"
 	"github.com/felixge/httpsnoop"
 	"github.com/psanford/donutdb"
+	"github.com/psanford/donutdb/internal/donuterr"
 	"github.com/psanford/donutdb/logger"
 )
 
@@ -140,7 +141,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.DB.Dispatch(method, body)
 	if err != nil {
-		if dbErr, ok := err.(donutdb.HTTPError); ok {
+		if dbErr, ok := err.(donuterr.HTTPError); ok {
 			out, err := json.Marshal(dbErr)
 			if err != nil {
 				http.Error(w, "Marshal response err", http.StatusInternalServerError)
