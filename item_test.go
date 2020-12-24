@@ -16,7 +16,7 @@ func TestPutGetDeleteItemHashKey(t *testing.T) {
 	key1 := "proton-Tolyatti"
 
 	item1 := map[string]*dynamodb.AttributeValue{
-		"hash_key": {
+		"hash-key": {
 			S: &key1,
 		},
 		"val1": {
@@ -37,7 +37,7 @@ func TestPutGetDeleteItemHashKey(t *testing.T) {
 	out, err := dbt.db.GetItem(&dynamodb.GetItemInput{
 		TableName: &dbt.hashTable,
 		Key: map[string]*dynamodb.AttributeValue{
-			"hash_key": {
+			"hash-key": {
 				S: &key1,
 			},
 		},
@@ -53,7 +53,7 @@ func TestPutGetDeleteItemHashKey(t *testing.T) {
 	oldItem, err := dbt.db.DeleteItem(&dynamodb.DeleteItemInput{
 		TableName: &dbt.hashTable,
 		Key: map[string]*dynamodb.AttributeValue{
-			"hash_key": {
+			"hash-key": {
 				S: &key1,
 			},
 		},
@@ -70,7 +70,7 @@ func TestPutGetDeleteItemHashKey(t *testing.T) {
 	_, err = dbt.db.DeleteItem(&dynamodb.DeleteItemInput{
 		TableName: &dbt.hashTable,
 		Key: map[string]*dynamodb.AttributeValue{
-			"hash_key": {
+			"hash-key": {
 				S: &key1,
 			},
 		},
@@ -100,7 +100,7 @@ func TestPutGetDeleteItemHashRangeKey(t *testing.T) {
 	rkStr := fmt.Sprintf("%f", rk)
 
 	item1 := map[string]*dynamodb.AttributeValue{
-		"hash_key": {
+		"hash-key": {
 			S: &hk,
 		},
 		"range_key": {
@@ -124,7 +124,7 @@ func TestPutGetDeleteItemHashRangeKey(t *testing.T) {
 	out, err := dbt.db.GetItem(&dynamodb.GetItemInput{
 		TableName: &dbt.hashRangeTable,
 		Key: map[string]*dynamodb.AttributeValue{
-			"hash_key": {
+			"hash-key": {
 				S: &hk,
 			},
 			"range_key": {
@@ -143,7 +143,7 @@ func TestPutGetDeleteItemHashRangeKey(t *testing.T) {
 	oldItem, err := dbt.db.DeleteItem(&dynamodb.DeleteItemInput{
 		TableName: &dbt.hashRangeTable,
 		Key: map[string]*dynamodb.AttributeValue{
-			"hash_key": {
+			"hash-key": {
 				S: &hk,
 			},
 			"range_key": {
@@ -162,7 +162,7 @@ func TestPutGetDeleteItemHashRangeKey(t *testing.T) {
 	_, err = dbt.db.DeleteItem(&dynamodb.DeleteItemInput{
 		TableName: &dbt.hashRangeTable,
 		Key: map[string]*dynamodb.AttributeValue{
-			"hash_key": {
+			"hash-key": {
 				S: &hk,
 			},
 			"range_key": {
@@ -185,9 +185,9 @@ func mkDB() testDB {
 	db := mkEmptyDB()
 
 	var (
-		hashTblName      = "hash_tbl"
-		hashRangeTblName = "hash_range_tbl"
-		hashKey          = "hash_key"
+		hashTblName      = "hash-tbl"
+		hashRangeTblName = "hash-range_tbl"
+		hashKey          = "hash-key"
 		rangeKey         = "range_key"
 	)
 

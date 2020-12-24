@@ -236,8 +236,8 @@ func (db *DB) Insert(tbl *TableMetadata, hashKeyAttr, rangeKeyAttr *dynamodb.Att
 	var oldItem map[string]*dynamodb.AttributeValue
 
 	where := squirrel.Eq{
-		"donutdb_hash_key": hashedKey,
-		tbl.HashKey:        keyVal,
+		"donutdb_hash_key":         hashedKey,
+		strconv.Quote(tbl.HashKey): keyVal,
 	}
 
 	var rangeKey interface{}
@@ -250,7 +250,7 @@ func (db *DB) Insert(tbl *TableMetadata, hashKeyAttr, rangeKeyAttr *dynamodb.Att
 		where[tbl.RangeKey] = rangeKey
 	}
 
-	query, queryArgs, err := squirrel.Select("donutdb_data").From(tbl.Name).Where(where).ToSql()
+	query, queryArgs, err := squirrel.Select("donutdb_data").From(strconv.Quote(tbl.Name)).Where(where).ToSql()
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +283,7 @@ func (db *DB) Insert(tbl *TableMetadata, hashKeyAttr, rangeKeyAttr *dynamodb.Att
 	}
 	insertArgs = append(insertArgs, marshalledItem)
 
-	stmt, _, err := insertOrReplace(tbl.Name).Values(insertArgs...).ToSql()
+	stmt, _, err := insertOrReplace(strconv.Quote(tbl.Name)).Values(insertArgs...).ToSql()
 	if err != nil {
 		return nil, err
 	}
@@ -312,8 +312,8 @@ func (db *DB) Get(tbl *TableMetadata, hashKeyAttr, rangeKeyAttr *dynamodb.Attrib
 	}
 
 	where := squirrel.Eq{
-		"donutdb_hash_key": hashedKey,
-		tbl.HashKey:        keyVal,
+		"donutdb_hash_key":         hashedKey,
+		strconv.Quote(tbl.HashKey): keyVal,
 	}
 
 	if tbl.RangeKey != "" {
@@ -325,7 +325,7 @@ func (db *DB) Get(tbl *TableMetadata, hashKeyAttr, rangeKeyAttr *dynamodb.Attrib
 		where[tbl.RangeKey] = rangeKey
 	}
 
-	query, args, err := squirrel.Select("donutdb_data").From(tbl.Name).Where(where).ToSql()
+	query, args, err := squirrel.Select("donutdb_data").From(strconv.Quote(tbl.Name)).Where(where).ToSql()
 	if err != nil {
 		return nil, err
 	}
@@ -374,8 +374,8 @@ func (db *DB) Delete(tbl *TableMetadata, hashKeyAttr, rangeKeyAttr *dynamodb.Att
 	var oldItem map[string]*dynamodb.AttributeValue
 
 	where := squirrel.Eq{
-		"donutdb_hash_key": hashedKey,
-		tbl.HashKey:        keyVal,
+		"donutdb_hash_key":         hashedKey,
+		strconv.Quote(tbl.HashKey): keyVal,
 	}
 
 	var rangeKey interface{}
@@ -388,7 +388,7 @@ func (db *DB) Delete(tbl *TableMetadata, hashKeyAttr, rangeKeyAttr *dynamodb.Att
 		where[tbl.RangeKey] = rangeKey
 	}
 
-	query, queryArgs, err := squirrel.Select("donutdb_data").From(tbl.Name).Where(where).ToSql()
+	query, queryArgs, err := squirrel.Select("donutdb_data").From(strconv.Quote(tbl.Name)).Where(where).ToSql()
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +407,7 @@ func (db *DB) Delete(tbl *TableMetadata, hashKeyAttr, rangeKeyAttr *dynamodb.Att
 		}
 	}
 
-	squirrel.Delete(tbl.Name).Where(where).RunWith(tx).Exec()
+	squirrel.Delete(strconv.Quote(tbl.Name)).Where(where).RunWith(tx).Exec()
 	shouldRollback = false
 	err = tx.Commit()
 	if err != nil {
