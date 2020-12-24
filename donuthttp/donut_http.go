@@ -113,7 +113,8 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		err := s.verifyRequest(r, body)
 		if err != nil {
 			if s.Logger != nil {
-				s.Logger.Log("evt", "invalid_request_err", "err", err)
+				logger.LogFields(s.Logger,
+					"evt", "invalid_request_err", "err", err)
 			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -139,6 +140,10 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	method := parts[1]
 
+	if s.LogLevel&logger.LogHTTPPayloads != 0 && s.Logger != nil {
+		logger.LogFields(s.Logger, "evt", "request_payload", "method", method, "payload", string(body))
+	}
+
 	result, err := s.DB.Dispatch(method, body)
 	if err != nil {
 		if dbErr, ok := err.(donuterr.HTTPError); ok {
@@ -149,12 +154,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 			}
 			http.Error(w, string(out), dbErr.HTTPCode())
 			if s.Logger != nil {
-				s.Logger.Log("evt", "donuterr", "err", string(out))
+				logger.LogFields(s.Logger, "evt", "donuterr", "err", string(out))
 			}
 		} else {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			if s.Logger != nil {
-				s.Logger.Log("evt", "internal_err", "err", err)
+				logger.LogFields(s.Logger, "evt", "internal_err", "err", err)
 			}
 		}
 		return

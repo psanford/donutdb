@@ -17,6 +17,7 @@ import (
 
 var addr = flag.String("addr", "127.0.0.1:3484", "Listen address")
 var dbConn = flag.String("db", ":memory:?cache=shared", "sqlite db connection string (or path)")
+var logPayloads = flag.Bool("log-payloads", false, "Log http request payloads")
 
 func main() {
 	flag.Parse()
@@ -42,6 +43,10 @@ func main() {
 		DB:              db,
 		Logger:          logger.StdoutLogger,
 		LogLevel:        logger.LogHTTPRequests,
+	}
+
+	if *logPayloads {
+		server.LogLevel |= logger.LogHTTPPayloads
 	}
 
 	server.Start()

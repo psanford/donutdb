@@ -31,6 +31,8 @@ const (
 	LogOff LogLevelType = 0
 	// LogHTTPRequests enables HTTP Request logging
 	LogHTTPRequests LogLevelType = 1 << iota
+	// LogHTTPPayloads full request/response logging
+	LogHTTPPayloads
 )
 
 func LogFields(l Logger, args ...interface{}) {
