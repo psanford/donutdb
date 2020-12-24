@@ -2,13 +2,20 @@ package donuthttp
 
 import (
 	"bytes"
+	"database/sql"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/psanford/donutdb"
 )
 
 func TestVerifySignature(t *testing.T) {
-
 	s := Server{
 		AccessKey:       "DUMMYIDEXAMPLE",
 		SecretAccessKey: "DUMMYEXAMPLEKEY",
@@ -25,6 +32,7 @@ func TestVerifySignature(t *testing.T) {
 	nowFunc = func() time.Time {
 		return ts.Add(4 * time.Minute)
 	}
+	defer func() { nowFunc = time.Now }()
 
 	err = s.verifyRequest(r, body)
 	if err != nil {
@@ -36,6 +44,61 @@ func TestVerifySignature(t *testing.T) {
 	err = s.verifyRequest(r, body)
 	if err == nil {
 		t.Fatalf("expected verifyRequest to fail but it didn't")
+	}
+}
+
+func TestDispatch(t *testing.T) {
+	sqldb, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := donutdb.New(sqldb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := NewServer(db)
+	server.AccessKey = "DUMMYIDEXAMPLE"
+	server.SecretAccessKey = "DUMMYEXAMPLEKEY"
+	server.Region = "us-west-2"
+
+	server.Start()
+	defer server.Close()
+
+	creds := credentials.NewStaticCredentials(server.AccessKey, server.SecretAccessKey, "")
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		Config: aws.Config{
+			Credentials: creds,
+			Region:      &server.Region,
+			Endpoint:    &server.URL,
+			MaxRetries:  aws.Int(0),
+		},
+	}))
+
+	client := dynamodb.New(sess)
+
+	hashTblName := "collectivizes-Stowe"
+	hashKey := "hash_key_Pharaohs-actually"
+
+	createTbl := &dynamodb.CreateTableInput{
+		TableName: aws.String(hashTblName),
+		AttributeDefinitions: []*dynamodb.AttributeDefinition{
+			{
+				AttributeName: &hashKey,
+				AttributeType: aws.String("S"),
+			},
+		},
+		KeySchema: []*dynamodb.KeySchemaElement{
+			{
+				AttributeName: &hashKey,
+				KeyType:       aws.String("HASH"),
+			},
+		},
+		BillingMode: aws.String("PAY_PER_REQUEST"),
+	}
+	_, err = client.CreateTable(createTbl)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

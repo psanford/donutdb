@@ -148,8 +148,14 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			http.Error(w, string(out), dbErr.HTTPCode())
+			if s.Logger != nil {
+				s.Logger.Log("evt", "donuterr", "err", string(out))
+			}
 		} else {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			if s.Logger != nil {
+				s.Logger.Log("evt", "internal_err", "err", err)
+			}
 		}
 		return
 	}

@@ -23,7 +23,7 @@ import (
 	"github.com/psanford/donutdb/donuthttp"
 )
 
-var dynamoAddr = flag.String("dynamo-addr", "http://127.0.0.1:8000", "Address of upstream dynamodb server (could be local dynamodb")
+var dynamoAddr = flag.String("dynamo-addr", "http://127.0.0.1:8000", "Address of upstream dynamodb server (could be local dynamodb)")
 var accessKey = flag.String("access-key-id", "DUMMYIDEXAMPLE", "AWS access key id")
 var secretAccessKey = flag.String("secret-access-key", "DUMMYIDEXAMPLEKEY", "AWS secret access key")
 var region = flag.String("region", "us-west-2", "AWS Region to use")
