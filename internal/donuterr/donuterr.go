@@ -14,7 +14,7 @@ var dynamoDBerrPrefix = "com.amazonaws.dynamodb.v20120810#"
 
 func ResourceInUseErr(msg string) APIErr {
 	return APIErr{
-		typ:  "ResourceInUseException",
+		Typ:  "ResourceInUseException",
 		msg:  msg,
 		code: 400,
 	}
@@ -22,7 +22,7 @@ func ResourceInUseErr(msg string) APIErr {
 
 func ValidationErr(msg string) APIErr {
 	return APIErr{
-		typ:  "ValidationException",
+		Typ:  "ValidationException",
 		msg:  msg,
 		code: 400,
 	}
@@ -30,7 +30,7 @@ func ValidationErr(msg string) APIErr {
 
 func ResourceNotFoundErr(msg string) APIErr {
 	return APIErr{
-		typ:  "ResourceNotFoundException",
+		Typ:  "ResourceNotFoundException",
 		msg:  msg,
 		code: 400,
 	}
@@ -41,18 +41,18 @@ func FieldNotImplementedErr(field string) error {
 }
 
 type APIErr struct {
-	typ  string
+	Typ  string
 	msg  string
 	code int
 }
 
 func (e APIErr) Error() string {
-	return e.msg
+	return fmt.Sprintf("%s:%s", e.Typ, e.msg)
 }
 
 func (e APIErr) MarshalJSON() ([]byte, error) {
 	res := []byte(fmt.Sprintf(`{"__type":"%s%s","message":%s}`,
-		dynamoDBerrPrefix, e.typ, strconv.Quote(e.msg)))
+		dynamoDBerrPrefix, e.Typ, strconv.Quote(e.msg)))
 
 	return res, nil
 }

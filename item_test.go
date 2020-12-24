@@ -7,9 +7,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/google/go-cmp/cmp"
+	"github.com/psanford/donutdb/internal/donuterr"
 )
 
-func TestPutItemHashKey(t *testing.T) {
+func TestPutGetDeleteItemHashKey(t *testing.T) {
 	dbt := mkDB()
 
 	key1 := "proton-Tolyatti"
@@ -48,9 +49,50 @@ func TestPutItemHashKey(t *testing.T) {
 	if diff := cmp.Diff(item1, out.Item); diff != "" {
 		t.Fatalf("item1 mismatch: %s", diff)
 	}
+
+	oldItem, err := dbt.db.DeleteItem(&dynamodb.DeleteItemInput{
+		TableName: &dbt.hashTable,
+		Key: map[string]*dynamodb.AttributeValue{
+			"hash_key": {
+				S: &key1,
+			},
+		},
+		ReturnValues: aws.String("ALL_OLD"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(item1, oldItem.Attributes); diff != "" {
+		t.Fatalf("delete item return mismatch: %s", diff)
+	}
+
+	_, err = dbt.db.DeleteItem(&dynamodb.DeleteItemInput{
+		TableName: &dbt.hashTable,
+		Key: map[string]*dynamodb.AttributeValue{
+			"hash_key": {
+				S: &key1,
+			},
+		},
+		ReturnValues: aws.String("ALL_OLD"),
+	})
+	if !isResourceNotFound(err) {
+		t.Fatalf("Expected ResourceNotFound but got %s", err)
+	}
 }
 
-func TestPutItemHashRangeKey(t *testing.T) {
+func isResourceNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	apiErr, ok := err.(donuterr.APIErr)
+	if !ok {
+		return false
+	}
+	return apiErr.Typ == "ResourceNotFoundException"
+}
+
+func TestPutGetDeleteItemHashRangeKey(t *testing.T) {
 	dbt := mkDB()
 
 	hk := "analgesics-patrimony"
@@ -96,6 +138,40 @@ func TestPutItemHashRangeKey(t *testing.T) {
 
 	if diff := cmp.Diff(item1, out.Item); diff != "" {
 		t.Fatalf("item1 mismatch: %s", diff)
+	}
+
+	oldItem, err := dbt.db.DeleteItem(&dynamodb.DeleteItemInput{
+		TableName: &dbt.hashRangeTable,
+		Key: map[string]*dynamodb.AttributeValue{
+			"hash_key": {
+				S: &hk,
+			},
+			"range_key": {
+				N: &rkStr,
+			},
+		},
+		ReturnValues: aws.String("ALL_OLD"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(item1, oldItem.Attributes); diff != "" {
+		t.Fatalf("delete item mismatch: %s", diff)
+	}
+
+	_, err = dbt.db.DeleteItem(&dynamodb.DeleteItemInput{
+		TableName: &dbt.hashRangeTable,
+		Key: map[string]*dynamodb.AttributeValue{
+			"hash_key": {
+				S: &hk,
+			},
+			"range_key": {
+				N: &rkStr,
+			},
+		},
+	})
+	if !isResourceNotFound(err) {
+		t.Fatalf("Expected ResourceNotFound but got %s", err)
 	}
 }
 

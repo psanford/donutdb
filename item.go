@@ -63,12 +63,12 @@ func (db *DonutDB) PutItemWithContext(ctx context.Context, input *dynamodb.PutIt
 	var oldItem donutsql.Item
 
 	if tbl.RangeKey != "" {
-		oldItem, err = db.donutSQL.InsertHR(tbl, hashKeyAttr, rangeKeyAttr, input.Item)
+		oldItem, err = db.donutSQL.Insert(tbl, hashKeyAttr, rangeKeyAttr, input.Item)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		oldItem, err = db.donutSQL.InsertH(tbl, hashKeyAttr, input.Item)
+		oldItem, err = db.donutSQL.Insert(tbl, hashKeyAttr, nil, input.Item)
 		if err != nil {
 			return nil, err
 		}
@@ -122,9 +122,9 @@ func (db *DonutDB) GetItemWithContext(ctx context.Context, input *dynamodb.GetIt
 
 	if tbl.RangeKey != "" {
 		rangeKeyAttr := input.Key[tbl.RangeKey]
-		item, err = db.donutSQL.GetHR(tbl, hashKeyAttr, rangeKeyAttr)
+		item, err = db.donutSQL.Get(tbl, hashKeyAttr, rangeKeyAttr)
 	} else {
-		item, err = db.donutSQL.GetH(tbl, hashKeyAttr)
+		item, err = db.donutSQL.Get(tbl, hashKeyAttr, nil)
 	}
 
 	out := dynamodb.GetItemOutput{
@@ -161,14 +161,30 @@ func (db *DonutDB) DeleteItemWithContext(ctx context.Context, input *dynamodb.De
 		return nil, donuterr.FieldNotImplementedErr("ReturnItemCollectionMetrics")
 	}
 
-	// tbl, err := db.getTableMetadata(*input.TableName)
-	// if err == sql.ErrNoRows {
-	// 	return nil, donuterr.ValidationErr("no such table")
-	// } else if err != nil {
-	// 	return nil, err
-	// }
+	tbl, err := db.donutSQL.TableMetadata(*input.TableName)
+	if err == sql.ErrNoRows {
+		return nil, donuterr.ValidationErr("no such table")
+	} else if err != nil {
+		return nil, err
+	}
 
-	return nil, donuterr.ToBeImplementedErr
+	hashKeyAttr := input.Key[tbl.HashKey]
+	if hashKeyAttr == nil {
+		return nil, donuterr.ValidationErr("missing hash key")
+	}
+
+	rangeKeyAttr := input.Key[tbl.RangeKey]
+	item, err := db.donutSQL.Delete(tbl, hashKeyAttr, rangeKeyAttr)
+	if err != nil {
+		return nil, err
+	}
+
+	var output dynamodb.DeleteItemOutput
+	if input.ReturnValues != nil && *input.ReturnValues == "ALL_OLD" {
+		output.Attributes = item
+	}
+
+	return &output, nil
 }
 
 func hashKeyBytes(keyAttr *dynamodb.AttributeValue, typ string) (string, interface{}, error) {
