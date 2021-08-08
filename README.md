@@ -1,5 +1,7 @@
 # dynamosql: A sqlite VFS backed by DynamoDB
 
+Store and query a sqlite database directly from DynamoDB.
+
 Project Status: Pre-Alpha
 
 ## DynamoDB Schema
