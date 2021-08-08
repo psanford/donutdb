@@ -141,24 +141,32 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 
 	firstSector := off - (off % sectorSize)
 
-	// fill sectors before offset that have not been hydrated yet
-	// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-	// we don't need to start at 0 here
-	// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-	for i := int64(0); i < firstSector; i += sectorSize {
-		sectorLastBytePossible := i + sectorSize - 1
+	oldLastSector := oldFileSize - (oldFileSize % sectorSize)
+
+	for sectorStart := oldLastSector; sectorStart < firstSector; sectorStart += sectorSize {
+		sectorLastBytePossible := sectorStart + sectorSize - 1
 		if off > int64(sectorLastBytePossible) {
-			if oldFileSize <= i {
+			if oldFileSize <= sectorStart {
 				err = f.writeSector(&sector{
-					offset: i,
+					offset: sectorStart,
 					data:   make([]byte, sectorSize),
 				})
 				if err != nil {
-					return writeCount, fmt.Errorf("fill sector (off=%d) err: %w", i, err)
+					return writeCount, fmt.Errorf("fill sector (off=%d) err: %w", sectorStart, err)
 				}
 				// create sector as empty
 			} else if oldFileSize < int64(sectorLastBytePossible) {
 				// fill existing sector
+				sect, err := f.getSector(sectorStart)
+				if err != nil {
+					return 0, err
+				}
+				fill := make([]byte, sectorSize-len(sect.data))
+				sect.data = append(sect.data, fill...)
+				err = f.writeSector(sect)
+				if err != nil {
+					return 0, err
+				}
 			} else {
 				// this is a full sector, don't do anything
 			}

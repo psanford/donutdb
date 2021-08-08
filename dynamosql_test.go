@@ -331,7 +331,7 @@ func TestReadWriteFile(t *testing.T) {
 	}
 }
 
-func TestFuzzCases(t *testing.T) {
+func TestReadWriteCases(t *testing.T) {
 	serverInfo, err := setupDynamoServer()
 	if err != nil {
 		t.Fatal(err)
@@ -360,18 +360,48 @@ func TestFuzzCases(t *testing.T) {
 				},
 			},
 		},
-		// {
-		// 	writes: []sizeOff{
-		// 		{
-		// 			offset: 0,
-		// 			size:   1,
-		// 		},
-		// 		{
-		// 			offset: 57574,
-		// 			size:   10208,
-		// 		},
-		// 	},
-		// },
+		{
+			writes: []sizeOff{
+				// do a small write,
+				// trigger a grow
+				// write on a sector size boundry
+				{
+					offset: 0,
+					size:   1,
+				},
+				{
+					offset: 4096,
+					size:   10,
+				},
+			},
+		},
+		{
+			writes: []sizeOff{
+				// do a small write,
+				// trigger a grow
+				// write on a sector size boundry
+				{
+					offset: 0,
+					size:   1,
+				},
+				{
+					offset: 8192,
+					size:   4096,
+				},
+			},
+		},
+		{
+			writes: []sizeOff{
+				{
+					offset: 0,
+					size:   1,
+				},
+				{
+					offset: 57574,
+					size:   10208,
+				},
+			},
+		},
 	}
 
 	for i, check := range checks {
