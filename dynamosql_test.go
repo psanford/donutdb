@@ -34,9 +34,6 @@ func setupDynamoServer() (*dynamoServerInfo, error) {
 	// if set, test will try to start local dynamo db jar
 	dynamoLocalDir := os.Getenv("DONUTDB_DYNAMODB_LOCAL_DIR")
 
-	// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-	dynamoLocalDir = filepath.Join(os.Getenv("HOME"), "lib/dynamodb_local")
-
 	var cleanups []func()
 	info.Cleanup = func() {
 		for _, cleanupFunc := range cleanups {
