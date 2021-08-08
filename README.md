@@ -1,4 +1,4 @@
-# dynamosql: A sqlite VFS backed by DynamoDB
+# donutdb: A sqlite VFS backed by DynamoDB
 
 Store and query a sqlite database directly from DynamoDB.
 

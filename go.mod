@@ -1,4 +1,4 @@
-module github.com/psanford/dynamosql
+module github.com/psanford/donutdb
 
 go 1.17
 

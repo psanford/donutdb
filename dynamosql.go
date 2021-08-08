@@ -1,4 +1,4 @@
-package dynamosql
+package donutdb
 
 import (
 	"fmt"

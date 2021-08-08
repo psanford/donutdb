@@ -1,4 +1,4 @@
-package dynamosql
+package donutdb
 
 import (
 	"bytes"
@@ -26,13 +26,13 @@ import (
 
 func setupDynamoServer() (*dynamoServerInfo, error) {
 	info := dynamoServerInfo{
-		TableName: os.Getenv("DYNAMOSQL_DYNAMODB_TEST_TABLE_NAME"),
-		Addr:      os.Getenv("DYNAMOSQL_DYNAMODB_TEST_ADDR"),
-		Region:    os.Getenv("DYNAMOSQL_DYNAMODB_TEST_REGION"),
+		TableName: os.Getenv("DONUTDB_DYNAMODB_TEST_TABLE_NAME"),
+		Addr:      os.Getenv("DONUTDB_DYNAMODB_TEST_ADDR"),
+		Region:    os.Getenv("DONUTDB_DYNAMODB_TEST_REGION"),
 	}
 
 	// if set, test will try to start local dynamo db jar
-	dynamoLocalDir := os.Getenv("DYNAMOSQL_DYNAMODB_LOCAL_DIR")
+	dynamoLocalDir := os.Getenv("DONUTDB_DYNAMODB_LOCAL_DIR")
 
 	// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 	dynamoLocalDir = filepath.Join(os.Getenv("HOME"), "lib/dynamodb_local")
@@ -99,7 +99,7 @@ func setupDynamoServer() (*dynamoServerInfo, error) {
 	info.db = dynamodb.New(sess)
 
 	if info.TableName == "" {
-		info.TableName = fmt.Sprintf("dynamosql-test-%d", time.Now().UnixNano())
+		info.TableName = fmt.Sprintf("donutdb-test-%d", time.Now().UnixNano())
 
 		_, err := info.db.CreateTable(&dynamodb.CreateTableInput{
 			TableName: &info.TableName,
@@ -142,7 +142,7 @@ type dynamoServerInfo struct {
 	db        *dynamodb.DynamoDB
 }
 
-func TestDynamoSQL(t *testing.T) {
+func TestDonutDB(t *testing.T) {
 	serverInfo, err := setupDynamoServer()
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestDynamoSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dbName := fmt.Sprintf("dynamosql-test-%d.db", time.Now().UnixNano())
+	dbName := fmt.Sprintf("donutdb-test-%d.db", time.Now().UnixNano())
 	db, err := sql.Open("sqlite3", dbName+"?vfs=dynamodb")
 	if err != nil {
 		t.Fatal(err)
@@ -455,7 +455,7 @@ type FooRow struct {
 }
 
 func newFsanity(rwa readWriteAt) *readWriteSanity {
-	f, err := ioutil.TempFile("", "dynamosql-test-sanity")
+	f, err := ioutil.TempFile("", "donutdb-test-sanity")
 	if err != nil {
 		panic(err)
 	}
