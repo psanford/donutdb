@@ -92,7 +92,7 @@ func (f *file) ReadAt(p []byte, off int64) (int, error) {
 		return 0, fs.ErrClosed
 	}
 
-	firstSector := off - (off % sectorSize)
+	firstSector := sectorForPos(off)
 
 	fileSize, err := f.FileSize()
 	if err != nil {
@@ -101,7 +101,7 @@ func (f *file) ReadAt(p []byte, off int64) (int, error) {
 
 	lastByte := off + int64(len(p)) - 1
 
-	lastSector := lastByte - (lastByte % sectorSize)
+	lastSector := sectorForPos(lastByte)
 
 	var sect sector
 	iter := f.newSectorIterator(&sect, firstSector, lastSector)
@@ -145,9 +145,9 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 		return writeCount, fmt.Errorf("filesize err: %w", err)
 	}
 
-	firstSector := off - (off % sectorSize)
+	firstSector := sectorForPos(off)
 
-	oldLastSector := oldFileSize - (oldFileSize % sectorSize)
+	oldLastSector := sectorForPos(oldFileSize)
 
 	secWriter := &sectorWriter{
 		f: f,
@@ -257,8 +257,42 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 }
 
 func (f *file) Truncate(size int64) error {
-	panic("truncate not implemented")
-	return sqlite3vfs.ReadOnlyError
+	fileSize, err := f.FileSize()
+	if err != nil {
+		return err
+	}
+
+	if size >= fileSize {
+		return nil
+	}
+
+	firstSector := sectorForPos(size)
+
+	sect, err := f.getSector(firstSector)
+	if err != nil {
+		return err
+	}
+
+	sect.data = sect.data[:size%sectorSize]
+
+	secWriter := &sectorWriter{
+		f: f,
+	}
+
+	secWriter.writeSector(sect)
+
+	lastSector := sectorForPos(fileSize)
+
+	startSector := firstSector + sectorSize
+	for sectToDelete := startSector; sectToDelete <= lastSector; sectToDelete += sectorSize {
+		secWriter.deleteSector(sectToDelete)
+	}
+
+	return secWriter.flush()
+}
+
+func sectorForPos(pos int64) int64 {
+	return pos - (pos % sectorSize)
 }
 
 func (f *file) Sync(flag sqlite3vfs.SyncType) error {
@@ -266,7 +300,6 @@ func (f *file) Sync(flag sqlite3vfs.SyncType) error {
 }
 
 func (f *file) FileSize() (int64, error) {
-
 	sector, err := f.getLastSector()
 	if err == sectorNotFoundErr {
 		return 0, nil
@@ -294,7 +327,7 @@ func (f *file) SectorSize() int64 {
 }
 
 func (f *file) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
-	return 0
+	return sqlite3vfs.IocapAtomic4K | sqlite3vfs.IocapSafeAppend | sqlite3vfs.IocapSequential
 }
 
 var (

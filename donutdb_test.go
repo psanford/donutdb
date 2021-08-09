@@ -325,6 +325,15 @@ func TestReadWriteFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	size, err = f.FileSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = f.Truncate(305204 + 3679)
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestReadWriteCases(t *testing.T) {
@@ -525,10 +534,25 @@ func (f *readWriteSanity) Close() error {
 	return err
 }
 
+func (f *readWriteSanity) Truncate(n int64) error {
+	err1 := f.primary.Truncate(n)
+	err2 := f.sanity.Truncate(n)
+
+	if err1 != err2 {
+		panic(fmt.Sprintf("sanity Truncate failed err1=%s err_sanity=%s", err1, err2))
+	}
+
+	// trigger sanity filesize check
+	f.FileSize()
+
+	return err1
+}
+
 type readWriteAt interface {
 	io.ReaderAt
 	io.WriterAt
 	io.Closer
+	Truncate(size int64) error
 	FileSize() (int64, error)
 }
 

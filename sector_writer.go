@@ -13,7 +13,8 @@ type sectorWriter struct {
 	f   *file
 	err error
 
-	pendingSectors []sector
+	pendingWriteSectors  []sector
+	pendingDeleteSectors []int64
 }
 
 func (w *sectorWriter) writeSector(s *sector) error {
@@ -21,9 +22,23 @@ func (w *sectorWriter) writeSector(s *sector) error {
 		return w.err
 	}
 
-	w.pendingSectors = append(w.pendingSectors, *s)
+	w.pendingWriteSectors = append(w.pendingWriteSectors, *s)
 
-	if len(w.pendingSectors) == 25 {
+	if len(w.pendingWriteSectors)+len(w.pendingDeleteSectors) == 25 {
+		return w.flush()
+	}
+
+	return nil
+}
+
+func (w *sectorWriter) deleteSector(s int64) error {
+	if w.err != nil {
+		return w.err
+	}
+
+	w.pendingDeleteSectors = append(w.pendingDeleteSectors, s)
+
+	if len(w.pendingWriteSectors)+len(w.pendingDeleteSectors) == 25 {
 		return w.flush()
 	}
 
@@ -35,16 +50,16 @@ func (w *sectorWriter) flush() error {
 		return w.err
 	}
 
-	if len(w.pendingSectors) == 0 {
+	if len(w.pendingWriteSectors)+len(w.pendingDeleteSectors) == 0 {
 		return nil
 	}
 
-	reqs := make([]*dynamodb.WriteRequest, len(w.pendingSectors))
+	reqs := make([]*dynamodb.WriteRequest, 0, len(w.pendingWriteSectors)+len(w.pendingDeleteSectors))
 
-	for i, s := range w.pendingSectors {
+	for _, s := range w.pendingWriteSectors {
 		rangeKeyStr := strconv.FormatInt(s.offset, 10)
 
-		reqs[i] = &dynamodb.WriteRequest{
+		req := &dynamodb.WriteRequest{
 			PutRequest: &dynamodb.PutRequest{
 				Item: map[string]*dynamodb.AttributeValue{
 					hKey: {
@@ -59,6 +74,24 @@ func (w *sectorWriter) flush() error {
 				},
 			},
 		}
+		reqs = append(reqs, req)
+	}
+
+	for _, s := range w.pendingDeleteSectors {
+		rangeKeyStr := strconv.FormatInt(s, 10)
+		req := &dynamodb.WriteRequest{
+			DeleteRequest: &dynamodb.DeleteRequest{
+				Key: map[string]*dynamodb.AttributeValue{
+					hKey: {
+						S: &w.f.name,
+					},
+					rKey: {
+						N: &rangeKeyStr,
+					},
+				},
+			},
+		}
+		reqs = append(reqs, req)
 	}
 
 	items := map[string][]*dynamodb.WriteRequest{
@@ -74,6 +107,7 @@ func (w *sectorWriter) flush() error {
 		return err
 	}
 
-	w.pendingSectors = w.pendingSectors[:0]
+	w.pendingWriteSectors = w.pendingWriteSectors[:0]
+	w.pendingDeleteSectors = w.pendingDeleteSectors[:0]
 	return nil
 }
