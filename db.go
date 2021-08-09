@@ -70,9 +70,6 @@ func (f *file) writeSector(s *sector) error {
 	return err
 }
 
-// func (f *file) allocate() (*sector, error) {
-// }
-
 func (f *file) getLastSector() (*sector, error) {
 	out, err := f.vfs.db.Query(&dynamodb.QueryInput{
 		TableName:              &f.vfs.table,
@@ -113,9 +110,19 @@ func (f *file) getLastSector() (*sector, error) {
 	}, nil
 }
 
-func getSectorRange(db *dynamodb.DynamoDB, table, fileName string, firstSector, lastSector int64) ([]sector, error) {
+func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 	startSector := firstSector
 	endSector := lastSector
+
+	if startSector == endSector {
+		sect, err := f.getSector(firstSector)
+		if err == sectorNotFoundErr {
+			return nil, nil
+		} else if err != nil {
+			return nil, err
+		}
+		return []sector{*sect}, nil
+	}
 
 	query := "hash_key = :hk AND range_key BETWEEN :first_sector AND :last_sector"
 	var sectors []sector
@@ -125,13 +132,14 @@ func getSectorRange(db *dynamodb.DynamoDB, table, fileName string, firstSector, 
 		startSectorStr := strconv.FormatInt(startSector, 10)
 		endSectorStr := strconv.FormatInt(endSector, 10)
 
-		out, err := db.Query(&dynamodb.QueryInput{
-			TableName:              &table,
+		out, err := f.vfs.db.Query(&dynamodb.QueryInput{
+			TableName:              &f.vfs.table,
 			KeyConditionExpression: &query,
 			ProjectionExpression:   aws.String("range_key, bytes"),
+			Limit:                  aws.Int64(1000),
 			ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 				":hk": {
-					S: &fileName,
+					S: &f.name,
 				},
 				":first_sector": {
 					N: &startSectorStr,

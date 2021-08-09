@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
@@ -203,7 +202,7 @@ func TestReadWriteFile(t *testing.T) {
 
 	vfs := New(serverInfo.db, serverInfo.TableName)
 
-	fname := "undervalues-reverend"
+	fname := fmt.Sprintf("undervalues-reverend-%d", time.Now().UnixMicro())
 	vfsF, _, err := vfs.Open(fname, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -511,7 +510,7 @@ func (f *readWriteSanity) ReadAt(p []byte, off int64) (int, error) {
 		panic(fmt.Sprintf("sanity ReadAt failed n1=%d n2=%d err1=%s err_sanity=%s", n1, n2, err1, err2))
 	}
 
-	if !reflect.DeepEqual(p[:n1], p2[:n2]) {
+	if !bytes.Equal(p[:n1], p2[:n2]) {
 		panic("sanity ReadAt p != p2")
 	}
 

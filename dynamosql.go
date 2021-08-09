@@ -103,21 +103,27 @@ func (f *file) ReadAt(p []byte, off int64) (int, error) {
 
 	lastSector := lastByte - (lastByte % sectorSize)
 
-	sectors, err := getSectorRange(f.vfs.db, f.vfs.table, f.name, firstSector, lastSector)
-	if err != nil {
-		return 0, err
-	}
+	var sect sector
+	iter := f.newSectorIterator(&sect, firstSector, lastSector)
 
-	var n int
-	for i, sector := range sectors {
-		if i == 0 {
+	var (
+		n     int
+		first = true
+	)
+	for iter.Next() {
+		if first {
 			startIndex := off % sectorSize
-			n = copy(p, sector.data[startIndex:])
+			n = copy(p, sect.data[startIndex:])
+			first = false
 			continue
 		}
 
-		nn := copy(p[n:], sector.data)
+		nn := copy(p[n:], sect.data)
 		n += nn
+	}
+	err = iter.Close()
+	if err != nil {
+		return n, err
 	}
 
 	if lastByte >= fileSize {
@@ -143,11 +149,15 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 
 	oldLastSector := oldFileSize - (oldFileSize % sectorSize)
 
+	secWriter := &sectorWriter{
+		f: f,
+	}
+
 	for sectorStart := oldLastSector; sectorStart < firstSector; sectorStart += sectorSize {
 		sectorLastBytePossible := sectorStart + sectorSize - 1
 		if off > int64(sectorLastBytePossible) {
 			if oldFileSize <= sectorStart {
-				err = f.writeSector(&sector{
+				err = secWriter.writeSector(&sector{
 					offset: sectorStart,
 					data:   make([]byte, sectorSize),
 				})
@@ -163,7 +173,7 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 				}
 				fill := make([]byte, sectorSize-len(sect.data))
 				sect.data = append(sect.data, fill...)
-				err = f.writeSector(sect)
+				err = secWriter.writeSector(sect)
 				if err != nil {
 					return 0, err
 				}
@@ -176,21 +186,34 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 	// we've hydrated all preceeding data
 	lastSectorOffset := (off + int64(len(b))) - ((off + int64(len(b))) % sectorSize)
 
+	var sect sector
+	iter := f.newSectorIterator(&sect, firstSector, lastSectorOffset)
+
 	// fill all but last sector
-	var idx int
+	var (
+		idx      int
+		iterDone bool
+	)
 	for sec := firstSector; sec <= lastSectorOffset; sec += sectorSize {
 
-		sect, err := f.getSector(sec)
-		if err == sectorNotFoundErr {
-			if sec%sectorSize != 0 {
-				panic(fmt.Sprintf("sec not a modulo of sectorSize %d", sec))
-			}
-			sect = &sector{
+		if iterDone {
+			sect = sector{
 				offset: sec,
 				data:   make([]byte, 0),
 			}
-		} else if err != nil {
-			return writeCount, fmt.Errorf("get sector err: %w", err)
+
+		} else {
+			if !iter.Next() {
+				iterDone = true
+				err := iter.Close()
+				if err != nil {
+					return writeCount, fmt.Errorf("get sector err: %w", err)
+				}
+				sect = sector{
+					offset: sec,
+					data:   make([]byte, 0),
+				}
+			}
 		}
 
 		var offsetIntoSector int64
@@ -198,10 +221,10 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 			offsetIntoSector = off % sectorSize
 		}
 
-		if sec < lastSectorOffset && len(sect.data) < sectorSize {
+		if sect.offset < lastSectorOffset && len(sect.data) < sectorSize {
 			fill := make([]byte, sectorSize-len(sect.data))
 			sect.data = append(sect.data, fill...)
-		} else if sec == lastSectorOffset && len(sect.data) < int(offsetIntoSector)+len(b) {
+		} else if sect.offset == lastSectorOffset && len(sect.data) < int(offsetIntoSector)+len(b) {
 			fill := make([]byte, int(offsetIntoSector)+len(b)-len(sect.data))
 			sect.data = append(sect.data, fill...)
 		}
@@ -209,12 +232,25 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 		n := copy(sect.data[offsetIntoSector:], b)
 		b = b[n:]
 
-		err = f.writeSector(sect)
+		sectCopy := sect
+		err = secWriter.writeSector(&sectCopy)
 		if err != nil {
 			return writeCount, fmt.Errorf("write sector err: %w", err)
 		}
 		writeCount += n
 		idx++
+	}
+
+	if !iterDone {
+		err = iter.Close()
+		if err != nil {
+			return writeCount, fmt.Errorf("get sector err: %w", err)
+		}
+	}
+
+	err = secWriter.flush()
+	if err != nil {
+		return 0, err
 	}
 
 	return writeCount, nil
