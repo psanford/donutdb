@@ -134,12 +134,6 @@ Dynamo Table:
 
 Data Types stored in the dynamo table:
 
-- File System metadata
-This is a list of all files on the filesystem. This will be stored
-in a single primary key named "files" with a sort key of 0. Each
-attribute key will be a file path and the value will be any additional
-metadata stored for that file.
-
 - File data
 This is where the bytes for each file is stored. The primary key for a
 file will be `fileV1-${filename}`. Each file will be split into 4k

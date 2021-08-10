@@ -48,35 +48,50 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sql
 }
 
 func (v *vfs) Delete(name string, dirSync bool) error {
-	_, err := v.db.UpdateItem(&dynamodb.UpdateItemInput{
-		TableName: &v.table,
-		Key:       dynamoKey(filesKey, filesRangeKey),
-		AttributeUpdates: map[string]*dynamodb.AttributeValueUpdate{
-			name: {
-				Action: aws.String("DELETE"),
+	f := file{
+		name:    "fileV1-" + name,
+		rawName: name,
+		vfs:     v,
+	}
+
+	lastSec, err := f.getLastSector()
+	if err != nil {
+		return err
+	}
+
+	secWriter := &sectorWriter{
+		f: &f,
+	}
+
+	for sectToDelete := int64(0); sectToDelete <= lastSec.offset; sectToDelete += sectorSize {
+		secWriter.deleteSector(sectToDelete)
+	}
+
+	err = secWriter.flush()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
+	key := "fileV1-" + name
+	out, err := v.db.Query(&dynamodb.QueryInput{
+		TableName:              &v.table,
+		KeyConditionExpression: aws.String("hash_key = :hk"),
+		ProjectionExpression:   aws.String("range_key"),
+		Limit:                  aws.Int64(1),
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":hk": {
+				S: &key,
 			},
 		},
 	})
-	return err
-}
-
-var (
-	filesKey      = "files"
-	filesRangeKey = 0
-)
-
-func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
-	got, err := v.db.GetItem(&dynamodb.GetItemInput{
-		TableName:       &v.table,
-		Key:             dynamoKey(filesKey, filesRangeKey),
-		AttributesToGet: []*string{&name},
-	})
-
 	if err != nil {
 		return false, err
 	}
 
-	_, exists := got.Item[name]
+	exists := len(out.Items) > 0
 
 	if flag == sqlite3vfs.AccessExists {
 		return exists, nil

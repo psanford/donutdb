@@ -159,8 +159,6 @@ func TestDonutDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer db.Close()
-
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS foo (
 id text NOT NULL PRIMARY KEY,
 title text
@@ -189,6 +187,142 @@ title text
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+
+	rowIter, err := db.Query(`SELECT id, title from foo order by id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotRows []FooRow
+
+	for rowIter.Next() {
+		var row FooRow
+		err = rowIter.Scan(&row.ID, &row.Title)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotRows = append(gotRows, row)
+	}
+	err = rowIter.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !cmp.Equal(rows, gotRows) {
+		t.Fatal(cmp.Diff(rows, gotRows))
+	}
+
+	err = db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// reopen db
+	db, err = sql.Open("sqlite3", dbName+"?vfs=dynamodb")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rowIter, err = db.Query(`SELECT id, title from foo order by id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotRows = gotRows[:0]
+
+	for rowIter.Next() {
+		var row FooRow
+		err = rowIter.Scan(&row.ID, &row.Title)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotRows = append(gotRows, row)
+	}
+	err = rowIter.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !cmp.Equal(rows, gotRows) {
+		t.Fatal(cmp.Diff(rows, gotRows))
+	}
+
+	err = db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAccessDelete(t *testing.T) {
+	serverInfo, err := setupDynamoServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer serverInfo.Cleanup()
+
+	vfs := New(serverInfo.db, serverInfo.TableName)
+
+	fname := fmt.Sprintf("tearfully-coital-%d", time.Now().UnixMicro())
+
+	exists, err := vfs.Access(fname, sqlite3vfs.AccessExists)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if exists {
+		t.Fatal("File exists prior to being written to")
+	}
+
+	writable, err := vfs.Access(fname, sqlite3vfs.AccessReadWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !writable {
+		t.Fatal("File path is not writable")
+	}
+
+	f, _, err := vfs.Open(fname, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := make([]byte, 3267)
+	rand.Read(data)
+
+	_, err = f.WriteAt(data, 3227)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exists, err = vfs.Access(fname, sqlite3vfs.AccessExists)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !exists {
+		t.Fatal("File does not exist after writing to it")
+	}
+
+	err = vfs.Delete(fname, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exists, err = vfs.Access(fname, sqlite3vfs.AccessExists)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if exists {
+		t.Fatal("File still exists after deleting it")
 	}
 }
 
