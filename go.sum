@@ -13,8 +13,8 @@ github.com/mattn/go-sqlite3 v1.14.8/go.mod h1:NyWgC/yNuGj7Q9rpYnZvas74GogHl5/Z4A
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/psanford/sqlite3vfs v0.0.0-20210801051144-c41f6d945edb h1:3D9/mtWK17wJcNsF7S6zyQkMy9Pr9SN4PSj/TL3NlkY=
-github.com/psanford/sqlite3vfs v0.0.0-20210801051144-c41f6d945edb/go.mod h1:4CnLWpNEluUrLmUVLGEvkn0ZSEm9zdZmTtUlKRZp5Ag=
+github.com/psanford/sqlite3vfs v0.0.0-20210810192024-980beb1874e4 h1:Oun5zFH1CMQCKAS4hWzHX/SaysoOAhOiDqBkKj3n1/w=
+github.com/psanford/sqlite3vfs v0.0.0-20210810192024-980beb1874e4/go.mod h1:4CnLWpNEluUrLmUVLGEvkn0ZSEm9zdZmTtUlKRZp5Ag=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 golang.org/x/net v0.0.0-20210614182718-04defd469f4e/go.mod h1:9nx3DQGgdP8bBQD5qxJ1jj9UTztislL4KSBs9R2vV5Y=
 golang.org/x/sys v0.0.0-20201119102817-f84b799fce68/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=

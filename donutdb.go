@@ -1,6 +1,9 @@
 package donutdb
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,21 +18,28 @@ import (
 const sectorSize = 4096
 
 func New(dynamoClient *dynamodb.DynamoDB, table string) sqlite3vfs.VFS {
+	ownerIDBytes := make([]byte, 8)
+	rand.Read(ownerIDBytes)
 	return &vfs{
-		db:    dynamoClient,
-		table: table,
+		db:      dynamoClient,
+		table:   table,
+		ownerID: hex.EncodeToString(ownerIDBytes),
 	}
 }
 
 type vfs struct {
-	db    *dynamodb.DynamoDB
-	table string
+	db      *dynamodb.DynamoDB
+	table   string
+	ownerID string
 }
 
 func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sqlite3vfs.OpenFlag, error) {
 	f := file{
-		name: name,
-		vfs:  v,
+		name:    "fileV1-" + name,
+		rawName: name,
+		vfs:     v,
+
+		lockManager: newGlobalLockManger(v.db, v.table, name, v.ownerID),
 	}
 	return &f, flags, nil
 }
@@ -77,13 +87,20 @@ func (vfs *vfs) FullPathname(name string) string {
 }
 
 type file struct {
-	name   string
-	closed bool
-	vfs    *vfs
+	name    string
+	rawName string
+	closed  bool
+	vfs     *vfs
+
+	lockManager lockManager
 }
 
 func (f *file) Close() error {
 	f.closed = true
+	err := f.lockManager.close()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -311,15 +328,40 @@ func (f *file) FileSize() (int64, error) {
 }
 
 func (f *file) Lock(elock sqlite3vfs.LockType) error {
-	return nil
+	//    UNLOCKED -> SHARED
+	//    SHARED -> RESERVED
+	//    SHARED -> (PENDING) -> EXCLUSIVE
+	//    RESERVED -> (PENDING) -> EXCLUSIVE
+	//    PENDING -> EXCLUSIVE
+
+	curLevel := f.lockManager.level()
+
+	if elock <= curLevel {
+		return nil
+	}
+
+	//  (1) We never move from unlocked to anything higher than shared lock.
+	if curLevel == sqlite3vfs.LockNone && elock > sqlite3vfs.LockShared {
+		return errors.New("invalid lock transition requested")
+	}
+	//  (2) SQLite never explicitly requests a pendig lock.
+	if elock == sqlite3vfs.LockPending {
+		return errors.New("invalid Lock() request for state pending")
+	}
+	//  (3) A shared lock is always held when a reserve lock is requested.
+	if elock == sqlite3vfs.LockReserved && curLevel != sqlite3vfs.LockShared {
+		return errors.New("can only transition to Reserved lock from Shared lock")
+	}
+
+	return f.lockManager.lock(elock)
 }
 
 func (f *file) Unlock(elock sqlite3vfs.LockType) error {
-	return nil
+	return f.lockManager.unlock(elock)
 }
 
 func (f *file) CheckReservedLock() (bool, error) {
-	return false, nil
+	return f.lockManager.checkReservedLock()
 }
 
 func (f *file) SectorSize() int64 {
