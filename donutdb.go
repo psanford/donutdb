@@ -17,7 +17,10 @@ import (
 
 const sectorSize = 4096
 
-func New(dynamoClient *dynamodb.DynamoDB, table string) sqlite3vfs.VFS {
+type Option struct {
+}
+
+func New(dynamoClient *dynamodb.DynamoDB, table string, opts ...Option) sqlite3vfs.VFS {
 	ownerIDBytes := make([]byte, 8)
 	rand.Read(ownerIDBytes)
 	return &vfs{
