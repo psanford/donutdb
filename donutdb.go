@@ -15,7 +15,7 @@ import (
 	"github.com/psanford/sqlite3vfs"
 )
 
-const sectorSize = 4096
+const sectorSize = 1 << 17
 
 type Option struct {
 }
@@ -387,7 +387,7 @@ func (f *file) SectorSize() int64 {
 }
 
 func (f *file) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
-	return sqlite3vfs.IocapAtomic4K | sqlite3vfs.IocapSafeAppend | sqlite3vfs.IocapSequential
+	return sqlite3vfs.IocapAtomic64K | sqlite3vfs.IocapSafeAppend | sqlite3vfs.IocapSequential
 }
 
 var (
