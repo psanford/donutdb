@@ -93,8 +93,8 @@ func lsFilesAction(cmd *cobra.Command, args []string) {
 				prevOffset = rangeKey
 				continue
 			}
-			if strings.HasPrefix(*key, "fileV1-") {
-				filename := strings.TrimPrefix(*key, "fileV1-")
+			if strings.HasPrefix(prev, "fileV1-") {
+				filename := strings.TrimPrefix(prev, "fileV1-")
 				fmt.Printf("%s last_offset=%d\n", filename, prevOffset)
 			}
 			prev = *key
@@ -102,6 +102,11 @@ func lsFilesAction(cmd *cobra.Command, args []string) {
 		}
 		return true
 	})
+
+	if prev != "" && strings.HasPrefix(prev, "fileV1-") {
+		filename := strings.TrimPrefix(prev, "fileV1-")
+		fmt.Printf("%s last_offset=%d\n", filename, prevOffset)
+	}
 
 	if err != nil {
 		log.Fatalf("ScanPages error: %s", err)
