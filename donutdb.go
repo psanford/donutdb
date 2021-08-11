@@ -63,7 +63,7 @@ func (v *vfs) Delete(name string, dirSync bool) error {
 		f: &f,
 	}
 
-	for sectToDelete := int64(0); sectToDelete <= lastSec.offset; sectToDelete += sectorSize {
+	for sectToDelete := lastSec.offset; sectToDelete >= 0; sectToDelete -= sectorSize {
 		secWriter.deleteSector(sectToDelete)
 	}
 
