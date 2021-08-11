@@ -211,7 +211,10 @@ func pushFileAction(cmd *cobra.Command, args []string) {
 		File: file,
 	}
 
-	_, err = io.Copy(w, localFile)
+	// use our sector size as our tmp buffer
+	buf := make([]byte, 1<<17)
+
+	_, err = io.CopyBuffer(w, localFile, buf)
 	if err != nil {
 		log.Fatalf("Failed to push file to dynamodb: %s", err)
 	}
