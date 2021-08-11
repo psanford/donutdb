@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -124,7 +124,7 @@ func (f *file) Close() error {
 
 func (f *file) ReadAt(p []byte, off int64) (int, error) {
 	if f.closed {
-		return 0, fs.ErrClosed
+		return 0, os.ErrClosed
 	}
 
 	firstSector := sectorForPos(off)
@@ -170,7 +170,7 @@ func (f *file) ReadAt(p []byte, off int64) (int, error) {
 
 func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 	if f.closed {
-		return 0, fs.ErrClosed
+		return 0, os.ErrClosed
 	}
 
 	var writeCount int

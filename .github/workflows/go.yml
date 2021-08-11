@@ -1,0 +1,42 @@
+name: Go
+on: [push, pull_request]
+
+env:
+  DONUTDB_DYNAMODB_LOCAL_DIR: /tmp/dynamodb_local
+
+jobs:
+
+  build:
+    name: Build/Test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 3
+    strategy:
+      matrix:
+        go-version: [1.15.15, 1.16.7, 1.17rc2]
+        os: [ubuntu-latest]
+
+    steps:
+    - name: Set up Go
+      uses: actions/setup-go@v1
+      with:
+        go-version: ${{ matrix.go-version }}
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v1
+
+    - name: Fetch DynamoDB Local
+      run: |
+        mkdir $DONUTDB_DYNAMODB_LOCAL_DIR
+        wget https://s3.us-west-2.amazonaws.com/dynamodb-local/dynamodb_local_latest.tar.gz
+        tar -xf dynamodb_local_latest.tar.gz -C $DONUTDB_DYNAMODB_LOCAL_DIR
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Test
+      run: go test -v ./... --timeout 60s
+
+    - name: Meta Tests
+      run: go test -v -tags ci ./ci --timeout 60s
+      if: ${{ runner.os == 'Linux' }}

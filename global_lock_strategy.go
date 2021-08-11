@@ -108,7 +108,7 @@ func (m *globalLockManager) lock(elock sqlite3vfs.LockType) error {
 		// no one holds the lock, lets try to get it
 
 		deadline := time.Now().Add(deadlineDuration)
-		deadlineUsS := strconv.FormatInt(deadline.UnixMicro(), 10)
+		deadlineUsS := strconv.FormatInt(unixMicro(deadline), 10)
 
 		_, err = m.db.PutItem(&dynamodb.PutItemInput{
 			TableName:           &m.table,
@@ -137,11 +137,11 @@ func (m *globalLockManager) lock(elock sqlite3vfs.LockType) error {
 		return err
 	}
 
-	if time.Now().UnixMicro() > oldDeadlineUs {
+	if unixMicro(time.Now()) > oldDeadlineUs {
 		// the existing lock has expired, lets try to take it
 
 		deadline := time.Now().Add(deadlineDuration)
-		deadlineUsS := strconv.FormatInt(deadline.UnixMicro(), 10)
+		deadlineUsS := strconv.FormatInt(unixMicro(deadline), 10)
 
 		_, err = m.db.PutItem(&dynamodb.PutItemInput{
 			TableName:           &m.table,
@@ -254,7 +254,7 @@ func (m *globalLockManager) checkReservedLock() (bool, error) {
 		return false, err
 	}
 
-	if time.Now().UnixMicro() < deadlineUs {
+	if unixMicro(time.Now()) < deadlineUs {
 		// the existing lock is still active
 		return true, nil
 	}
@@ -345,7 +345,7 @@ func (m *globalLockManager) heartbeatLoop() {
 			}
 
 			deadline := time.Now().Add(deadlineDuration)
-			deadlineUsS := strconv.FormatInt(deadline.UnixMicro(), 10)
+			deadlineUsS := strconv.FormatInt(unixMicro(deadline), 10)
 
 			_, err := m.db.PutItem(&dynamodb.PutItemInput{
 				TableName:           &m.table,
@@ -389,4 +389,9 @@ func (m *globalLockManager) heartbeatLoop() {
 
 type startTickerMsg struct {
 	prevDeadline string
+}
+
+// remove once minimum supported version is 1.17 with .UnixMicro()
+func unixMicro(t time.Time) int64 {
+	return t.UnixNano() / 1e3
 }

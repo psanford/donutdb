@@ -264,7 +264,7 @@ func TestAccessDelete(t *testing.T) {
 
 	vfs := New(serverInfo.db, serverInfo.TableName)
 
-	fname := fmt.Sprintf("tearfully-coital-%d", time.Now().UnixMicro())
+	fname := fmt.Sprintf("tearfully-coital-%d", time.Now().UnixNano())
 
 	exists, err := vfs.Access(fname, sqlite3vfs.AccessExists)
 	if err != nil {
@@ -336,7 +336,7 @@ func TestReadWriteFile(t *testing.T) {
 
 	vfs := New(serverInfo.db, serverInfo.TableName)
 
-	fname := fmt.Sprintf("undervalues-reverend-%d", time.Now().UnixMicro())
+	fname := fmt.Sprintf("undervalues-reverend-%d", time.Now().UnixNano())
 	vfsF, _, err := vfs.Open(fname, 0)
 	if err != nil {
 		t.Fatal(err)
