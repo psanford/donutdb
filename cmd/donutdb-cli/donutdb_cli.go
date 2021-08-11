@@ -35,6 +35,7 @@ func main() {
 	rootCmd.AddCommand(lsFilesCommand())
 	rootCmd.AddCommand(pullFileCommand())
 	rootCmd.AddCommand(pushFileCommand())
+	rootCmd.AddCommand(rmFileCommand())
 	err := rootCmd.Execute()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
@@ -196,6 +197,11 @@ func pushFileAction(cmd *cobra.Command, args []string) {
 		log.Fatalf("Open file err: %s", err)
 	}
 
+	err = file.Truncate(0)
+	if err != nil {
+		panic(err)
+	}
+
 	w := &writerFromWriterAt{
 		File: file,
 	}
@@ -206,6 +212,37 @@ func pushFileAction(cmd *cobra.Command, args []string) {
 	}
 
 	log.Printf("pushed %s\n", filename)
+}
+
+func rmFileCommand() *cobra.Command {
+	cmd := cobra.Command{
+		Use:   "rm <table> <filename>",
+		Short: "Remove file from dynamodb table",
+		Run:   rmFileAction,
+	}
+
+	return &cmd
+}
+
+func rmFileAction(cmd *cobra.Command, args []string) {
+	if len(args) < 2 {
+		log.Fatalf("Usage: ls <dynamodb_table> <file>")
+	}
+
+	table := args[0]
+	filename := args[1]
+
+	sess := session.New(&aws.Config{
+		Region: &region,
+	})
+	dynamoClient := dynamodb.New(sess)
+
+	vfs := donutdb.New(dynamoClient, table)
+
+	err := vfs.Delete(filename, false)
+	if err != nil {
+		log.Fatalf("Failed to rm file from dynamodb: %s", err)
+	}
 }
 
 type writerFromWriterAt struct {
