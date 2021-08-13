@@ -19,7 +19,7 @@ func (f *file) getSector(sectorOffset int64) (*sector, error) {
 		Limit:                  aws.Int64(1),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":hk": {
-				S: &f.name,
+				S: &f.dataRowKey,
 			},
 			":rk": {
 				N: &rangeKeyStr,
@@ -56,7 +56,7 @@ func (f *file) writeSector(s *sector) error {
 		TableName: &f.vfs.table,
 		Item: map[string]*dynamodb.AttributeValue{
 			hKey: {
-				S: &f.name,
+				S: &f.dataRowKey,
 			},
 			rKey: {
 				N: &rangeKeyStr,
@@ -79,7 +79,7 @@ func (f *file) getLastSector() (*sector, error) {
 		Limit:                  aws.Int64(1),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":hk": {
-				S: &f.name,
+				S: &f.dataRowKey,
 			},
 		},
 	})
@@ -139,7 +139,7 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 			Limit:                  aws.Int64(1000),
 			ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 				":hk": {
-					S: &f.name,
+					S: &f.dataRowKey,
 				},
 				":first_sector": {
 					N: &startSectorStr,
