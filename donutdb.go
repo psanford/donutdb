@@ -88,6 +88,8 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sql
 			}
 
 			meta.RandID = base64.URLEncoding.EncodeToString(fileIDBytes)
+			meta.DataRowKey = fileDataPrefix + meta.RandID + "-" + name
+			meta.LockRowKey = fileLockPrefix + meta.RandID + "-" + name
 
 			metaBytes, err := json.Marshal(meta)
 			if err != nil {
@@ -262,7 +264,7 @@ func (vfs *vfs) FullPathname(name string) string {
 }
 
 type file struct {
-	name       string
+	dataRowKey string
 	rawName    string
 	randID     string
 	sectorSize int64
@@ -571,16 +573,18 @@ type fileMetaV1 struct {
 	SectorSize  int64  `json:"sector_size"`
 	OrigName    string `json:"orig_name"`
 	RandID      string `json:"rand_id"`
+	DataRowKey  string `json:"data_row_key"`
+	LockRowKey  string `json:"lock_row_key"`
 }
 
 func (v *vfs) fileFromMeta(meta *fileMetaV1) *file {
 	return &file{
-		name:       fileDataPrefix + meta.RandID + "-" + meta.OrigName,
+		dataRowKey: fileDataPrefix + meta.RandID + "-" + meta.OrigName,
 		rawName:    meta.OrigName,
 		randID:     meta.RandID,
 		sectorSize: meta.SectorSize,
 		vfs:        v,
 
-		lockManager: newGlobalLockManger(v.db, v.table, meta.OrigName, meta.RandID, v.ownerID),
+		lockManager: newGlobalLockManger(v.db, v.table, meta.LockRowKey, v.ownerID),
 	}
 }

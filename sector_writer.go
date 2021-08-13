@@ -63,7 +63,7 @@ func (w *sectorWriter) flush() error {
 			PutRequest: &dynamodb.PutRequest{
 				Item: map[string]*dynamodb.AttributeValue{
 					hKey: {
-						S: &w.f.name,
+						S: &w.f.dataRowKey,
 					},
 					rKey: {
 						N: &rangeKeyStr,
@@ -83,7 +83,7 @@ func (w *sectorWriter) flush() error {
 			DeleteRequest: &dynamodb.DeleteRequest{
 				Key: map[string]*dynamodb.AttributeValue{
 					hKey: {
-						S: &w.f.name,
+						S: &w.f.dataRowKey,
 					},
 					rKey: {
 						N: &rangeKeyStr,
