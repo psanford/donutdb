@@ -126,7 +126,7 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 
 	query := "hash_key = :hk AND range_key BETWEEN :first_sector AND :last_sector"
 	var sectors []sector
-	prevSectorOffset := firstSector - sectorSize
+	prevSectorOffset := firstSector - defaultSectorSize
 
 	for {
 		startSectorStr := strconv.FormatInt(startSector, 10)
@@ -163,8 +163,8 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 				return nil, fmt.Errorf("range_key does not parse to an int: %s %w", *item[rKey].N, err)
 			}
 
-			if sectorOffset != prevSectorOffset+sectorSize {
-				return nil, fmt.Errorf("Unexpected sector offset for range %d-%d, prev=%d got=%d expected=%d", firstSector, lastSector, prevSectorOffset, sectorOffset, prevSectorOffset+sectorSize)
+			if sectorOffset != prevSectorOffset+defaultSectorSize {
+				return nil, fmt.Errorf("Unexpected sector offset for range %d-%d, prev=%d got=%d expected=%d", firstSector, lastSector, prevSectorOffset, sectorOffset, prevSectorOffset+defaultSectorSize)
 			}
 
 			sectorData := item["bytes"].B
