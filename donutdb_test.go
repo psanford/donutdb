@@ -509,7 +509,7 @@ func TestReadWriteCases(t *testing.T) {
 					size:   1,
 				},
 				{
-					offset: sectorSize,
+					offset: defaultSectorSize,
 					size:   10,
 				},
 			},
@@ -524,8 +524,8 @@ func TestReadWriteCases(t *testing.T) {
 					size:   1,
 				},
 				{
-					offset: sectorSize * 2,
-					size:   sectorSize,
+					offset: defaultSectorSize * 2,
+					size:   defaultSectorSize,
 				},
 			},
 		},

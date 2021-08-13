@@ -47,7 +47,7 @@ func (i *sectorIterator) Next() bool {
 	*i.sectorPtr = i.cachedSectors[0]
 	i.cachedSectors = i.cachedSectors[1:]
 
-	i.offset = i.sectorPtr.offset + sectorSize
+	i.offset = i.sectorPtr.offset + defaultSectorSize
 
 	return true
 }

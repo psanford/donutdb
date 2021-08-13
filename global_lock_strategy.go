@@ -30,8 +30,8 @@ type globalLockManager struct {
 	err error
 }
 
-func newGlobalLockManger(db *dynamodb.DynamoDB, table, name, owner string) *globalLockManager {
-	lockName := "lock-global-v1-" + name
+func newGlobalLockManger(db *dynamodb.DynamoDB, table, name, randID, owner string) *globalLockManager {
+	lockName := fileLockPrefix + randID + "-" + name
 	lm := &globalLockManager{
 		db:       db,
 		table:    table,

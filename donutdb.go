@@ -2,7 +2,9 @@ package donutdb
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,14 +17,22 @@ import (
 	"github.com/psanford/sqlite3vfs"
 )
 
-const sectorSize = 1 << 17
+const (
+	defaultSectorSize = 1 << 17
+
+	fileMetaKey    = "file-meta-v1"
+	fileDataPrefix = "file-v1-"
+	fileLockPrefix = "lock-global-v1-"
+)
 
 type Option struct {
 }
 
 func New(dynamoClient *dynamodb.DynamoDB, table string, opts ...Option) sqlite3vfs.VFS {
 	ownerIDBytes := make([]byte, 8)
-	rand.Read(ownerIDBytes)
+	if _, err := rand.Read(ownerIDBytes); err != nil {
+		panic(err)
+	}
 	return &vfs{
 		db:      dynamoClient,
 		table:   table,
@@ -37,22 +47,162 @@ type vfs struct {
 }
 
 func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sqlite3vfs.OpenFlag, error) {
-	f := file{
-		name:    "fileV1-" + name,
-		rawName: name,
-		vfs:     v,
 
-		lockManager: newGlobalLockManger(v.db, v.table, name, v.ownerID),
+	meta := fileMetaV1{
+		MetaVersion: 1,
+		OrigName:    name,
+		SectorSize:  defaultSectorSize,
 	}
-	return &f, flags, nil
+
+	// try in loop incase we a racing with another client.
+	// give up if we fail 100 times in a row
+	for i := 0; i < 100; i++ {
+		existing, err := v.db.Query(&dynamodb.QueryInput{
+			TableName:            &v.table,
+			Limit:                aws.Int64(1),
+			ConsistentRead:       aws.Bool(true),
+			ProjectionExpression: aws.String("#fname"),
+			ExpressionAttributeNames: map[string]*string{
+				"#fname": aws.String(name),
+			},
+			KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
+			ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+				":hk": {
+					S: aws.String("file-meta-v1"),
+				},
+				":rk": {
+					N: aws.String("0"),
+				},
+			},
+		})
+
+		if err != nil {
+			return nil, 0, err
+		}
+
+		if len(existing.Items) == 0 || len(existing.Items[0]) == 0 {
+			fileIDBytes := make([]byte, 20)
+			rand.Read(fileIDBytes)
+			if _, err := rand.Read(fileIDBytes); err != nil {
+				panic(err)
+			}
+
+			meta.RandID = base64.URLEncoding.EncodeToString(fileIDBytes)
+
+			metaBytes, err := json.Marshal(meta)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			_, err = v.db.UpdateItem(&dynamodb.UpdateItemInput{
+				TableName:           &v.table,
+				UpdateExpression:    aws.String("SET #fname=:meta"),
+				ConditionExpression: aws.String("attribute_not_exists(#fname)"),
+				Key: map[string]*dynamodb.AttributeValue{
+					hKey: {
+						S: aws.String("file-meta-v1"),
+					},
+					rKey: {
+						N: aws.String("0"),
+					},
+				},
+				ExpressionAttributeNames: map[string]*string{
+					"#fname": aws.String(name),
+				},
+				ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+					":meta": {
+						S: aws.String(string(metaBytes)),
+					},
+				},
+			})
+
+			if err != nil {
+				if _, match := err.(*dynamodb.ConditionalCheckFailedException); match {
+					// we raced with another client, retry
+					continue
+				}
+				return nil, 0, err
+			}
+
+			f := v.fileFromMeta(&meta)
+			return f, flags, nil
+		} else {
+			err = json.Unmarshal([]byte(*existing.Items[0][name].S), &meta)
+			if err != nil {
+				return nil, 0, fmt.Errorf("decode file metadata err: %w", err)
+			}
+
+			f := v.fileFromMeta(&meta)
+			return f, flags, nil
+		}
+	}
+
+	return nil, flags, errors.New("failed to get/create file metadata too many times due to races")
 }
 
 func (v *vfs) Delete(name string, dirSync bool) error {
-	f := file{
-		name:    "fileV1-" + name,
-		rawName: name,
-		vfs:     v,
+	existing, err := v.db.Query(&dynamodb.QueryInput{
+		TableName:            &v.table,
+		Limit:                aws.Int64(1),
+		ConsistentRead:       aws.Bool(true),
+		ProjectionExpression: aws.String("#fname"),
+		ExpressionAttributeNames: map[string]*string{
+			"#fname": aws.String(name),
+		},
+		KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":hk": {
+				S: aws.String("file-meta-v1"),
+			},
+			":rk": {
+				N: aws.String("0"),
+			},
+		},
+	})
+
+	if err != nil {
+		return err
 	}
+
+	if len(existing.Items) == 0 {
+		return nil
+	}
+
+	metaBytes := *existing.Items[0][name].S
+
+	var meta fileMetaV1
+	err = json.Unmarshal([]byte(metaBytes), &meta)
+	if err != nil {
+		return fmt.Errorf("unmarshal file meta v1 err: %w", err)
+	}
+
+	_, err = v.db.UpdateItem(&dynamodb.UpdateItemInput{
+		TableName:           &v.table,
+		UpdateExpression:    aws.String("REMOVE #fname"),
+		ConditionExpression: aws.String("#fname=:meta"),
+		Key: map[string]*dynamodb.AttributeValue{
+			hKey: {
+				S: aws.String("file-meta-v1"),
+			},
+			rKey: {
+				N: aws.String("0"),
+			},
+		},
+		ExpressionAttributeNames: map[string]*string{
+			"#fname": aws.String(name),
+		},
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":meta": {
+				S: aws.String(metaBytes),
+			},
+		},
+	})
+
+	if err != nil {
+		return err
+	}
+
+	f := v.fileFromMeta(&meta)
 
 	lastSec, err := f.getLastSector()
 	if err != nil {
@@ -60,10 +210,10 @@ func (v *vfs) Delete(name string, dirSync bool) error {
 	}
 
 	secWriter := &sectorWriter{
-		f: &f,
+		f: f,
 	}
 
-	for sectToDelete := lastSec.offset; sectToDelete >= 0; sectToDelete -= sectorSize {
+	for sectToDelete := lastSec.offset; sectToDelete >= 0; sectToDelete -= f.sectorSize {
 		secWriter.deleteSector(sectToDelete)
 	}
 
@@ -75,23 +225,30 @@ func (v *vfs) Delete(name string, dirSync bool) error {
 }
 
 func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
-	key := "fileV1-" + name
-	out, err := v.db.Query(&dynamodb.QueryInput{
-		TableName:              &v.table,
-		KeyConditionExpression: aws.String("hash_key = :hk"),
-		ProjectionExpression:   aws.String("range_key"),
-		Limit:                  aws.Int64(1),
+	existing, err := v.db.Query(&dynamodb.QueryInput{
+		TableName:            &v.table,
+		Limit:                aws.Int64(1),
+		ConsistentRead:       aws.Bool(true),
+		ProjectionExpression: aws.String("#fname"),
+		ExpressionAttributeNames: map[string]*string{
+			"#fname": aws.String(name),
+		},
+		KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":hk": {
-				S: &key,
+				S: aws.String("file-meta-v1"),
+			},
+			":rk": {
+				N: aws.String("0"),
 			},
 		},
 	})
+
 	if err != nil {
 		return false, err
 	}
 
-	exists := len(out.Items) > 0
+	exists := len(existing.Items) > 0 && len(existing.Items[0]) > 0
 
 	if flag == sqlite3vfs.AccessExists {
 		return exists, nil
@@ -105,10 +262,12 @@ func (vfs *vfs) FullPathname(name string) string {
 }
 
 type file struct {
-	name    string
-	rawName string
-	closed  bool
-	vfs     *vfs
+	name       string
+	rawName    string
+	randID     string
+	sectorSize int64
+	closed     bool
+	vfs        *vfs
 
 	lockManager lockManager
 }
@@ -127,7 +286,7 @@ func (f *file) ReadAt(p []byte, off int64) (int, error) {
 		return 0, os.ErrClosed
 	}
 
-	firstSector := sectorForPos(off)
+	firstSector := f.sectorForPos(off)
 
 	fileSize, err := f.FileSize()
 	if err != nil {
@@ -136,7 +295,7 @@ func (f *file) ReadAt(p []byte, off int64) (int, error) {
 
 	lastByte := off + int64(len(p)) - 1
 
-	lastSector := sectorForPos(lastByte)
+	lastSector := f.sectorForPos(lastByte)
 
 	var sect sector
 	iter := f.newSectorIterator(&sect, firstSector, lastSector)
@@ -147,7 +306,7 @@ func (f *file) ReadAt(p []byte, off int64) (int, error) {
 	)
 	for iter.Next() {
 		if first {
-			startIndex := off % sectorSize
+			startIndex := off % f.sectorSize
 			n = copy(p, sect.data[startIndex:])
 			first = false
 			continue
@@ -180,21 +339,21 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 		return writeCount, fmt.Errorf("filesize err: %w", err)
 	}
 
-	firstSector := sectorForPos(off)
+	firstSector := f.sectorForPos(off)
 
-	oldLastSector := sectorForPos(oldFileSize)
+	oldLastSector := f.sectorForPos(oldFileSize)
 
 	secWriter := &sectorWriter{
 		f: f,
 	}
 
-	for sectorStart := oldLastSector; sectorStart < firstSector; sectorStart += sectorSize {
-		sectorLastBytePossible := sectorStart + sectorSize - 1
+	for sectorStart := oldLastSector; sectorStart < firstSector; sectorStart += f.sectorSize {
+		sectorLastBytePossible := sectorStart + f.sectorSize - 1
 		if off > int64(sectorLastBytePossible) {
 			if oldFileSize <= sectorStart {
 				err = secWriter.writeSector(&sector{
 					offset: sectorStart,
-					data:   make([]byte, sectorSize),
+					data:   make([]byte, f.sectorSize),
 				})
 				if err != nil {
 					return writeCount, fmt.Errorf("fill sector (off=%d) err: %w", sectorStart, err)
@@ -206,7 +365,7 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 				if err != nil {
 					return 0, err
 				}
-				fill := make([]byte, sectorSize-len(sect.data))
+				fill := make([]byte, f.sectorSize-int64(len(sect.data)))
 				sect.data = append(sect.data, fill...)
 				err = secWriter.writeSector(sect)
 				if err != nil {
@@ -219,7 +378,7 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 	}
 
 	// we've hydrated all preceeding data
-	lastSectorOffset := (off + int64(len(b))) - ((off + int64(len(b))) % sectorSize)
+	lastSectorOffset := (off + int64(len(b))) - ((off + int64(len(b))) % f.sectorSize)
 
 	var sect sector
 	iter := f.newSectorIterator(&sect, firstSector, lastSectorOffset)
@@ -229,7 +388,7 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 		idx      int
 		iterDone bool
 	)
-	for sec := firstSector; sec <= lastSectorOffset; sec += sectorSize {
+	for sec := firstSector; sec <= lastSectorOffset; sec += f.sectorSize {
 
 		if iterDone {
 			sect = sector{
@@ -253,11 +412,11 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 
 		var offsetIntoSector int64
 		if idx == 0 {
-			offsetIntoSector = off % sectorSize
+			offsetIntoSector = off % f.sectorSize
 		}
 
-		if sect.offset < lastSectorOffset && len(sect.data) < sectorSize {
-			fill := make([]byte, sectorSize-len(sect.data))
+		if sect.offset < lastSectorOffset && int64(len(sect.data)) < f.sectorSize {
+			fill := make([]byte, f.sectorSize-int64(len(sect.data)))
 			sect.data = append(sect.data, fill...)
 		} else if sect.offset == lastSectorOffset && len(sect.data) < int(offsetIntoSector)+len(b) {
 			fill := make([]byte, int(offsetIntoSector)+len(b)-len(sect.data))
@@ -301,14 +460,14 @@ func (f *file) Truncate(size int64) error {
 		return nil
 	}
 
-	firstSector := sectorForPos(size)
+	firstSector := f.sectorForPos(size)
 
 	sect, err := f.getSector(firstSector)
 	if err != nil {
 		return err
 	}
 
-	sect.data = sect.data[:size%sectorSize]
+	sect.data = sect.data[:size%f.sectorSize]
 
 	secWriter := &sectorWriter{
 		f: f,
@@ -316,18 +475,18 @@ func (f *file) Truncate(size int64) error {
 
 	secWriter.writeSector(sect)
 
-	lastSector := sectorForPos(fileSize)
+	lastSector := f.sectorForPos(fileSize)
 
-	startSector := firstSector + sectorSize
-	for sectToDelete := startSector; sectToDelete <= lastSector; sectToDelete += sectorSize {
+	startSector := firstSector + f.sectorSize
+	for sectToDelete := startSector; sectToDelete <= lastSector; sectToDelete += f.sectorSize {
 		secWriter.deleteSector(sectToDelete)
 	}
 
 	return secWriter.flush()
 }
 
-func sectorForPos(pos int64) int64 {
-	return pos - (pos % sectorSize)
+func (f *file) sectorForPos(pos int64) int64 {
+	return pos - (pos % f.sectorSize)
 }
 
 func (f *file) Sync(flag sqlite3vfs.SyncType) error {
@@ -383,7 +542,7 @@ func (f *file) CheckReservedLock() (bool, error) {
 }
 
 func (f *file) SectorSize() int64 {
-	return sectorSize
+	return f.sectorSize
 }
 
 func (f *file) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
@@ -404,5 +563,24 @@ func dynamoKey(hashKey string, rangeKey int) map[string]*dynamodb.AttributeValue
 		rKey: {
 			N: &rangeKeyStr,
 		},
+	}
+}
+
+type fileMetaV1 struct {
+	MetaVersion int    `json:"meta_version"`
+	SectorSize  int64  `json:"sector_size"`
+	OrigName    string `json:"orig_name"`
+	RandID      string `json:"rand_id"`
+}
+
+func (v *vfs) fileFromMeta(meta *fileMetaV1) *file {
+	return &file{
+		name:       fileDataPrefix + meta.RandID + "-" + meta.OrigName,
+		rawName:    meta.OrigName,
+		randID:     meta.RandID,
+		sectorSize: meta.SectorSize,
+		vfs:        v,
+
+		lockManager: newGlobalLockManger(v.db, v.table, meta.OrigName, meta.RandID, v.ownerID),
 	}
 }
