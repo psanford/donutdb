@@ -1,4 +1,4 @@
-donutloadable.so: donutloadable.c donutloadable.a
+donutdb.so: donutloadable.c donutloadable.a
 	gcc -g -fPIC -shared -o $@ $^
 
 donutloadable.a: donut_loadable.go
@@ -7,4 +7,4 @@ donutloadable.a: donut_loadable.go
 
 .PHONY: clean
 clean:
-	rm -f donutloadable.so donutloadable.a
+	rm -f donutdb.so donutloadable.a
