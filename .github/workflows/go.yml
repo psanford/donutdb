@@ -34,6 +34,9 @@ jobs:
     - name: Build
       run: go build -v ./...
 
+    - name: Build extension
+      run: make -C donutdb-loadable
+
     - name: Test
       run: go test -v ./... --timeout 60s
 
