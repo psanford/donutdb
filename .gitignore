@@ -1,0 +1,3 @@
+cmd/donutdb-cli/donutdb-cli
+donutdb-loadable/donutloadable.a
+donutdb-loadable/donutdb.so
