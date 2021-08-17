@@ -57,20 +57,18 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sql
 	// try in loop incase we a racing with another client.
 	// give up if we fail 100 times in a row
 	for i := 0; i < 100; i++ {
-		existing, err := v.db.Query(&dynamodb.QueryInput{
+		existing, err := v.db.GetItem(&dynamodb.GetItemInput{
 			TableName:            &v.table,
-			Limit:                aws.Int64(1),
 			ConsistentRead:       aws.Bool(true),
 			ProjectionExpression: aws.String("#fname"),
 			ExpressionAttributeNames: map[string]*string{
 				"#fname": aws.String(name),
 			},
-			KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
-			ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-				":hk": {
+			Key: map[string]*dynamodb.AttributeValue{
+				hKey: {
 					S: aws.String("file-meta-v1"),
 				},
-				":rk": {
+				rKey: {
 					N: aws.String("0"),
 				},
 			},
@@ -80,7 +78,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sql
 			return nil, 0, err
 		}
 
-		if len(existing.Items) == 0 || len(existing.Items[0]) == 0 {
+		if len(existing.Item) == 0 {
 			fileIDBytes := make([]byte, 20)
 			rand.Read(fileIDBytes)
 			if _, err := rand.Read(fileIDBytes); err != nil {
@@ -129,7 +127,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sql
 			f := v.fileFromMeta(&meta)
 			return f, flags, nil
 		} else {
-			err = json.Unmarshal([]byte(*existing.Items[0][name].S), &meta)
+			err = json.Unmarshal([]byte(*existing.Item[name].S), &meta)
 			if err != nil {
 				return nil, 0, fmt.Errorf("decode file metadata err: %w", err)
 			}
