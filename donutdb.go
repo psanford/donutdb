@@ -47,11 +47,11 @@ type vfs struct {
 }
 
 func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sqlite3vfs.OpenFlag, error) {
-
 	meta := fileMetaV1{
 		MetaVersion: 1,
 		OrigName:    name,
 		SectorSize:  defaultSectorSize,
+		CompressAlg: "zstd",
 	}
 
 	// try in loop incase we a racing with another client.
@@ -377,6 +377,11 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 		}
 	}
 
+	err = secWriter.flush()
+	if err != nil {
+		return 0, err
+	}
+
 	// we've hydrated all preceeding data
 	lastSectorOffset := (off + int64(len(b))) - ((off + int64(len(b))) % f.sectorSize)
 
@@ -573,6 +578,7 @@ type fileMetaV1 struct {
 	RandID      string `json:"rand_id"`
 	DataRowKey  string `json:"data_row_key"`
 	LockRowKey  string `json:"lock_row_key"`
+	CompressAlg string `json:"compress_alg"`
 }
 
 func (v *vfs) fileFromMeta(meta *fileMetaV1) *file {
