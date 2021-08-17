@@ -1,12 +1,15 @@
 package donutdb
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/klauspost/compress/zstd"
 )
 
 func (f *file) getSector(sectorOffset int64) (*sector, error) {
@@ -41,33 +44,26 @@ func (f *file) getSector(sectorOffset int64) (*sector, error) {
 		return nil, errors.New("no bytes attr found")
 	}
 
+	compressedSectorData := attr.B
+
+	r, err := zstd.NewReader(bytes.NewReader(compressedSectorData))
+	if err != nil {
+		panic(err)
+	}
+
+	sectorData, err := ioutil.ReadAll(r)
+	if err != nil {
+		panic(err)
+	}
+
+	r.Close()
+
 	s := sector{
 		offset: sectorOffset,
-		data:   attr.B,
+		data:   sectorData,
 	}
 
 	return &s, nil
-}
-
-func (f *file) writeSector(s *sector) error {
-	rangeKeyStr := strconv.FormatInt(s.offset, 10)
-
-	_, err := f.vfs.db.PutItem(&dynamodb.PutItemInput{
-		TableName: &f.vfs.table,
-		Item: map[string]*dynamodb.AttributeValue{
-			hKey: {
-				S: &f.dataRowKey,
-			},
-			rKey: {
-				N: &rangeKeyStr,
-			},
-			"bytes": {
-				B: s.data,
-			},
-		},
-	})
-
-	return err
 }
 
 func (f *file) getLastSector() (*sector, error) {
@@ -102,7 +98,19 @@ func (f *file) getLastSector() (*sector, error) {
 		return nil, fmt.Errorf("range_key does not parse to an int: %s %w", *item[rKey].N, err)
 	}
 
-	sectorData := item["bytes"].B
+	compressedSectorData := item["bytes"].B
+
+	r, err := zstd.NewReader(bytes.NewReader(compressedSectorData))
+	if err != nil {
+		panic(err)
+	}
+
+	sectorData, err := ioutil.ReadAll(r)
+	if err != nil {
+		panic(err)
+	}
+
+	r.Close()
 
 	return &sector{
 		offset: sectorOffset,
@@ -167,7 +175,19 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 				return nil, fmt.Errorf("Unexpected sector offset for range %d-%d, prev=%d got=%d expected=%d", firstSector, lastSector, prevSectorOffset, sectorOffset, prevSectorOffset+defaultSectorSize)
 			}
 
-			sectorData := item["bytes"].B
+			compressedSectorData := item["bytes"].B
+
+			r, err := zstd.NewReader(bytes.NewReader(compressedSectorData))
+			if err != nil {
+				panic(err)
+			}
+
+			sectorData, err := ioutil.ReadAll(r)
+			if err != nil {
+				panic(err)
+			}
+
+			r.Close()
 
 			sectors = append(sectors, sector{
 				offset: sectorOffset,

@@ -1,9 +1,11 @@
 package donutdb
 
 import (
+	"bytes"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/klauspost/compress/zstd"
 )
 
 // sectorWriter is a buffered writer for sectors.
@@ -59,6 +61,23 @@ func (w *sectorWriter) flush() error {
 	for _, s := range w.pendingWriteSectors {
 		rangeKeyStr := strconv.FormatInt(s.offset, 10)
 
+		b := bytes.NewBuffer(make([]byte, 0))
+		zw, err := zstd.NewWriter(b)
+		if err != nil {
+			panic(err)
+		}
+
+		_, err = zw.Write(s.data)
+		if err != nil {
+			panic(err)
+		}
+		err = zw.Close()
+		if err != nil {
+			panic(err)
+		}
+
+		compBytes := b.Bytes()
+
 		req := &dynamodb.WriteRequest{
 			PutRequest: &dynamodb.PutRequest{
 				Item: map[string]*dynamodb.AttributeValue{
@@ -69,7 +88,7 @@ func (w *sectorWriter) flush() error {
 						N: &rangeKeyStr,
 					},
 					"bytes": {
-						B: s.data,
+						B: compBytes,
 					},
 				},
 			},
