@@ -2,7 +2,11 @@
 
 Store and query a sqlite database directly backed by DynamoDB.
 
-Project Status: Alpha
+Project Status: Alpha (and slow!)
+
+donutdb is currently functional, but it is quite slow. As we work
+to make it more performant, there will likely be backwards incompatible
+changes to the serialization format.
 
 ## What is this?
 
