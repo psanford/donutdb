@@ -168,7 +168,7 @@ func pullFileAction(cmd *cobra.Command, args []string) {
 
 func pushFileCommand() *cobra.Command {
 	cmd := cobra.Command{
-		Use:   "push <table> <filename>",
+		Use:   "push <table> <local_file> <remote_file>",
 		Short: "Push file from dynamodb to local filesystem",
 		Run:   pushFileAction,
 	}
@@ -177,16 +177,17 @@ func pushFileCommand() *cobra.Command {
 }
 
 func pushFileAction(cmd *cobra.Command, args []string) {
-	if len(args) < 2 {
-		log.Fatalf("Usage: ls <dynamodb_table> <file>")
+	if len(args) < 3 {
+		log.Fatalf("Usage: ls <dynamodb_table> <local_file> <remote_file>")
 	}
 
 	table := args[0]
-	filename := args[1]
+	srcFileName := args[1]
+	dstFileName := args[2]
 
-	localFile, err := os.Open(filename)
+	localFile, err := os.Open(srcFileName)
 	if err != nil {
-		log.Fatalf("Failed to open local file: %s, err: %s", filename, err)
+		log.Fatalf("Failed to open local file: %s, err: %s", srcFileName, err)
 	}
 	defer localFile.Close()
 
@@ -197,7 +198,7 @@ func pushFileAction(cmd *cobra.Command, args []string) {
 
 	vfs := donutdb.New(dynamoClient, table)
 
-	file, _, err := vfs.Open(filename, 0)
+	file, _, err := vfs.Open(dstFileName, 0)
 	if err != nil {
 		log.Fatalf("Open file err: %s", err)
 	}
@@ -219,7 +220,7 @@ func pushFileAction(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to push file to dynamodb: %s", err)
 	}
 
-	log.Printf("pushed %s\n", filename)
+	log.Printf("pushed %s to %s\n", srcFileName, dstFileName)
 }
 
 func rmFileCommand() *cobra.Command {
