@@ -1,16 +1,16 @@
 package donutdb
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/klauspost/compress/zstd"
 )
+
+var decoder, _ = zstd.NewReader(nil)
 
 func (f *file) getSector(sectorOffset int64) (*sector, error) {
 	rangeKeyStr := strconv.FormatInt(sectorOffset, 10)
@@ -46,17 +46,11 @@ func (f *file) getSector(sectorOffset int64) (*sector, error) {
 
 	compressedSectorData := attr.B
 
-	r, err := zstd.NewReader(bytes.NewReader(compressedSectorData))
+	sectorData := make([]byte, 0, f.sectorSize)
+	sectorData, err = decoder.DecodeAll(compressedSectorData, sectorData)
 	if err != nil {
 		panic(err)
 	}
-
-	sectorData, err := ioutil.ReadAll(r)
-	if err != nil {
-		panic(err)
-	}
-
-	r.Close()
 
 	s := sector{
 		offset: sectorOffset,
@@ -100,17 +94,11 @@ func (f *file) getLastSector() (*sector, error) {
 
 	compressedSectorData := item["bytes"].B
 
-	r, err := zstd.NewReader(bytes.NewReader(compressedSectorData))
+	sectorData := make([]byte, 0, f.sectorSize)
+	sectorData, err = decoder.DecodeAll(compressedSectorData, sectorData)
 	if err != nil {
 		panic(err)
 	}
-
-	sectorData, err := ioutil.ReadAll(r)
-	if err != nil {
-		panic(err)
-	}
-
-	r.Close()
 
 	return &sector{
 		offset: sectorOffset,
@@ -177,17 +165,11 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 
 			compressedSectorData := item["bytes"].B
 
-			r, err := zstd.NewReader(bytes.NewReader(compressedSectorData))
+			sectorData := make([]byte, 0, f.sectorSize)
+			sectorData, err = decoder.DecodeAll(compressedSectorData, sectorData)
 			if err != nil {
 				panic(err)
 			}
-
-			sectorData, err := ioutil.ReadAll(r)
-			if err != nil {
-				panic(err)
-			}
-
-			r.Close()
 
 			sectors = append(sectors, sector{
 				offset: sectorOffset,
