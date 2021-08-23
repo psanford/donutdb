@@ -99,7 +99,7 @@ func lsFilesAction(cmd *cobra.Command, args []string) {
 func pullFileCommand() *cobra.Command {
 	cmd := cobra.Command{
 		Use:   "pull <table> <filename>",
-		Short: "Pull file from dynamodb to local filesystem",
+		Short: "Pull file from DynamoDB to local filesystem",
 		Run:   pullFileAction,
 	}
 
@@ -152,7 +152,7 @@ func pullFileAction(cmd *cobra.Command, args []string) {
 func pushFileCommand() *cobra.Command {
 	cmd := cobra.Command{
 		Use:   "push <table> <local_file> <remote_file>",
-		Short: "Push file from dynamodb to local filesystem",
+		Short: "Push file from local filesystem to DynamoDB",
 		Run:   pushFileAction,
 	}
 
