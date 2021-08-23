@@ -23,6 +23,9 @@ const (
 	fileMetaKey    = "file-meta-v1"
 	fileDataPrefix = "file-v1-"
 	fileLockPrefix = "lock-global-v1-"
+
+	hKey = "hash_key"
+	rKey = "range_key"
 )
 
 type Option struct {
@@ -66,7 +69,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sql
 			},
 			Key: map[string]*dynamodb.AttributeValue{
 				hKey: {
-					S: aws.String("file-meta-v1"),
+					S: aws.String(fileMetaKey),
 				},
 				rKey: {
 					N: aws.String("0"),
@@ -100,7 +103,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sql
 				ConditionExpression: aws.String("attribute_not_exists(#fname)"),
 				Key: map[string]*dynamodb.AttributeValue{
 					hKey: {
-						S: aws.String("file-meta-v1"),
+						S: aws.String(fileMetaKey),
 					},
 					rKey: {
 						N: aws.String("0"),
@@ -152,7 +155,7 @@ func (v *vfs) Delete(name string, dirSync bool) error {
 		KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":hk": {
-				S: aws.String("file-meta-v1"),
+				S: aws.String(fileMetaKey),
 			},
 			":rk": {
 				N: aws.String("0"),
@@ -182,7 +185,7 @@ func (v *vfs) Delete(name string, dirSync bool) error {
 		ConditionExpression: aws.String("#fname=:meta"),
 		Key: map[string]*dynamodb.AttributeValue{
 			hKey: {
-				S: aws.String("file-meta-v1"),
+				S: aws.String(fileMetaKey),
 			},
 			rKey: {
 				N: aws.String("0"),
@@ -236,7 +239,7 @@ func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
 		KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":hk": {
-				S: aws.String("file-meta-v1"),
+				S: aws.String(fileMetaKey),
 			},
 			":rk": {
 				N: aws.String("0"),
@@ -554,11 +557,6 @@ func (f *file) SectorSize() int64 {
 func (f *file) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
 	return sqlite3vfs.IocapAtomic64K | sqlite3vfs.IocapSafeAppend | sqlite3vfs.IocapSequential
 }
-
-var (
-	hKey = "hash_key"
-	rKey = "range_key"
-)
 
 func dynamoKey(hashKey string, rangeKey int) map[string]*dynamodb.AttributeValue {
 	rangeKeyStr := strconv.Itoa(rangeKey)

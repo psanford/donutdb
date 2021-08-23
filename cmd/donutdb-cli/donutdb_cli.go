@@ -5,8 +5,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"strconv"
-	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -20,6 +18,12 @@ var (
 	region = "us-east-1"
 
 	verboseOutput bool
+)
+
+const (
+	fileMetaKey = "file-meta-v1"
+	hKey        = "hash_key"
+	rKey        = "range_key"
 )
 
 var rootCmd = &cobra.Command{
@@ -68,49 +72,27 @@ func lsFilesAction(cmd *cobra.Command, args []string) {
 	})
 	dynamoClient := dynamodb.New(sess)
 
-	input := &dynamodb.ScanInput{
-		TableName:       &table,
-		AttributesToGet: []*string{aws.String("hash_key"), aws.String("range_key")},
-	}
-
-	var (
-		prev       string
-		prevOffset int64
-	)
-
-	err := dynamoClient.ScanPages(input, func(so *dynamodb.ScanOutput, b bool) bool {
-		for _, v := range so.Items {
-			key := v["hash_key"].S
-			rangeKeyS := v["range_key"].N
-			rangeKey, err := strconv.ParseInt(*rangeKeyS, 10, 64)
-			if err != nil {
-				log.Fatalf("rangeKey not a number: hash_key=%s range_key=%s", *key, *rangeKeyS)
-			}
-			if verboseOutput {
-				fmt.Printf("hk:%s rk:%s\n", *key, *rangeKeyS)
-			}
-
-			if *key == prev {
-				prevOffset = rangeKey
-				continue
-			}
-			if strings.HasPrefix(prev, "fileV1-") {
-				filename := strings.TrimPrefix(prev, "fileV1-")
-				fmt.Printf("%s last_offset=%d\n", filename, prevOffset)
-			}
-			prev = *key
-			prevOffset = 0
-		}
-		return true
+	fileRow, err := dynamoClient.GetItem(&dynamodb.GetItemInput{
+		TableName: &table,
+		Key: map[string]*dynamodb.AttributeValue{
+			hKey: {
+				S: aws.String(fileMetaKey),
+			},
+			rKey: {
+				N: aws.String("0"),
+			},
+		},
 	})
 
-	if prev != "" && strings.HasPrefix(prev, "fileV1-") {
-		filename := strings.TrimPrefix(prev, "fileV1-")
-		fmt.Printf("%s last_offset=%d\n", filename, prevOffset)
+	if err != nil {
+		log.Fatalf("GetItem err: %s", err)
 	}
 
-	if err != nil {
-		log.Fatalf("ScanPages error: %s", err)
+	for k, v := range fileRow.Item {
+		if k == hKey || k == rKey {
+			continue
+		}
+		fmt.Printf("%s %s\n", k, *v.S)
 	}
 }
 
