@@ -258,7 +258,8 @@ func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
 }
 
 func (vfs *vfs) FullPathname(name string) string {
-	return filepath.Clean(name)
+	name = filepath.Clean(string(filepath.Separator) + name)
+	return name
 }
 
 type file struct {

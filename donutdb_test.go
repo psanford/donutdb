@@ -588,6 +588,39 @@ func TestReadWriteCases(t *testing.T) {
 	}
 }
 
+func TestFullPathname(t *testing.T) {
+	checks := []struct {
+		in     string
+		expect string
+	}{
+		{
+			in:     "rancidity-embalmers.db",
+			expect: "/rancidity-embalmers.db",
+		},
+		{
+			in:     "/rancidity-embalmers.db",
+			expect: "/rancidity-embalmers.db",
+		},
+		{
+			in:     "//rancidity-embalmers.db",
+			expect: "/rancidity-embalmers.db",
+		},
+		{
+			in:     "//critical///swapping.db",
+			expect: "/critical/swapping.db",
+		},
+	}
+
+	v := vfs{}
+
+	for _, check := range checks {
+		got := v.FullPathname(check.in)
+		if got != check.expect {
+			t.Fatalf("Check fullpath: in=%s, got=%s expect=%s", check.in, got, check.expect)
+		}
+	}
+}
+
 type FooRow struct {
 	ID    string
 	Title string
