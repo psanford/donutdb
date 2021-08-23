@@ -36,6 +36,7 @@ func main() {
 	rootCmd.AddCommand(pullFileCommand())
 	rootCmd.AddCommand(pushFileCommand())
 	rootCmd.AddCommand(rmFileCommand())
+	rootCmd.AddCommand(debugCommand())
 	err := rootCmd.Execute()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
