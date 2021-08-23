@@ -1,12 +1,8 @@
-# donutdb: A SQL database implemented on DynamoDB and SQLite
+# DonutDB: A SQL database implemented on DynamoDB and SQLite
 
 Store and query a sqlite database directly backed by DynamoDB.
 
-Project Status: Alpha (and slow!)
-
-donutdb is currently functional, but it is quite slow. As we work
-to make it more performant, there will likely be backwards incompatible
-changes to the serialization format.
+Project Status: Alpha
 
 ## What is this?
 
@@ -122,6 +118,12 @@ single client at a time, which should make it safe for multiple
 clients without risk of corrupting the data.
 
 In the future we may implement a multi-reader single-writer locking strategy.
+
+## Performance Considerations
+
+Roundtrip latency to DynamoDB has a major impact on query performance. You probably want to run you application in the same region as your DynamoDB table.
+
+If you are using DonutDB from a Lambda function, you may want to do some testing with how the Lambda function's allocated memory affects query latency (memory size for Lambda also affects cpu allocation). In my testing I've found that at very low memory (128mb) application latency is affected by GC and CPU overhead for zstd decompression. Performance gets significantly better as memory size is increased.
 
 ## DynamoDB Schema
 
