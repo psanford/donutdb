@@ -110,12 +110,79 @@ title text
 }
 ```
 
+### SQLite3 CLI loadable module
+
+DonutDB also has a SQLite3 module in `donutdb-loadable`. This allows you to interact with DonutDB databases interactively from the SQLite3 CLI.
+
+```
+$ cd donutdb-loadable
+$ make
+go build -tags SQLITE3VFS_LOADABLE_EXT -o donutloadable.a -buildmode=c-archive donut_loadable.go
+rm donutloadable.h
+gcc -g -fPIC -shared -o donutdb.so donutloadable.c donutloadable.a
+
+# set the DynamoDB table name:
+$ export DONUTDB_TABLE=my-donutdb-table
+
+$ sqlite3
+SQLite version 3.31.1 2020-01-27 19:55:54
+Enter ".help" for usage hints.
+sqlite> -- load extension
+sqlite> .load ./donutdb
+sqlite3vfs register donutdb
+sqlite3vfs register donutdb done
+sqlite> -- open db using vfs=donutdb, note you must use the sqlite uri syntax which starts with file://
+sqlite> .open file:///foo.db?vfs=donutdb
+sqlite> -- query from remote db
+sqlite> SELECT * from csv where period > '2010' limit 10;
+series_reference      period      data_value  suppressed  status      units       magntude    subject                    grp                                                   series_title_1
+--------------------  ----------  ----------  ----------  ----------  ----------  ----------  -------------------------  ----------------------------------------------------  --------------
+BOPQ.S06AC000000000A  2010.03     17463                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+BOPQ.S06AC000000000A  2010.06     17260                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+BOPQ.S06AC000000000A  2010.09     15419                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+BOPQ.S06AC000000000A  2010.12     17088                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+BOPQ.S06AC000000000A  2011.03     18516                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+BOPQ.S06AC000000000A  2011.06     18835                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+BOPQ.S06AC000000000A  2011.09     16390                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+BOPQ.S06AC000000000A  2011.12     18748                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+BOPQ.S06AC000000000A  2012.03     18477                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+BOPQ.S06AC000000000A  2012.06     18270                   F           Dollars     6           Balance of Payments - BOP  BPM6 Quarterly, Balance of payments major components  Actual
+```
+
+### CLI tool
+
+DonutDB also provides a CLI tool to make it easier to manage SQLite database files in DynamoDB. `donutdb-cli` allow you to push and pull db files to a DynamoDB table:
+
+```
+$ ./donutdb-cli
+DonutDB CLI
+
+Usage:
+  donutdb-cli [command]
+
+Available Commands:
+  completion  generate the autocompletion script for the specified shell
+  debug       Debug commands
+  help        Help about any command
+  ls          List files in table
+  pull        Pull file from DynamoDB to local filesystem
+  push        Push file from local filesystem to DynamoDB
+  rm          Remove file from dynamodb table
+
+Flags:
+  -h, --help   help for donutdb-cli
+
+Use "donutdb-cli [command] --help" for more information about a command.
+```
+
 ## Is it safe to use concurrently?
 
 It should be. DonutDB currently implements a global lock using
 DynamoDB locks. This means access to the database is serialized to a
 single client at a time, which should make it safe for multiple
-clients without risk of corrupting the data.
+clients without risk of corrupting the data. However this also means
+client may get "Database locked" errors if clients hold locks for too
+long.
 
 In the future we may implement a multi-reader single-writer locking strategy.
 
