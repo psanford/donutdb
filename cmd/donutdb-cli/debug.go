@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -19,8 +20,50 @@ func debugCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(getKVCommand())
+	cmd.AddCommand(scanKeysCommand())
 
 	return &cmd
+}
+
+func scanKeysCommand() *cobra.Command {
+	cmd := cobra.Command{
+		Use:   "scan_keys <table>",
+		Short: "Scan all keys from dynamodb",
+		Run:   scanKeysAction,
+	}
+
+	return &cmd
+}
+
+func scanKeysAction(cmd *cobra.Command, args []string) {
+	if len(args) < 1 {
+		log.Fatalf("Usage: scan_keys <dynamodb_table>")
+	}
+
+	table := args[0]
+
+	sess := session.New(&aws.Config{
+		Region: &region,
+	})
+	dynamoClient := dynamodb.New(sess)
+
+	input := &dynamodb.ScanInput{
+		TableName:       &table,
+		AttributesToGet: []*string{aws.String("hash_key"), aws.String("range_key")},
+	}
+
+	err := dynamoClient.ScanPages(input, func(so *dynamodb.ScanOutput, b bool) bool {
+		for _, v := range so.Items {
+			key := v["hash_key"].S
+			rangeKeyS := v["range_key"].N
+			fmt.Printf("hk:%s rk:%s\n", *key, *rangeKeyS)
+		}
+		return true
+	})
+
+	if err != nil {
+		log.Fatalf("ScanPages error: %s", err)
+	}
 }
 
 func getKVCommand() *cobra.Command {
