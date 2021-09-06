@@ -1,7 +1,6 @@
 package donutdb
 
 import (
-	"bytes"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -18,6 +17,8 @@ type sectorWriter struct {
 	pendingWriteSectors  []sector
 	pendingDeleteSectors []int64
 }
+
+var encoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
 
 func (w *sectorWriter) writeSector(s *sector) error {
 	if w.err != nil {
@@ -61,22 +62,8 @@ func (w *sectorWriter) flush() error {
 	for _, s := range w.pendingWriteSectors {
 		rangeKeyStr := strconv.FormatInt(s.offset, 10)
 
-		b := bytes.NewBuffer(make([]byte, 0))
-		zw, err := zstd.NewWriter(b)
-		if err != nil {
-			panic(err)
-		}
-
-		_, err = zw.Write(s.data)
-		if err != nil {
-			panic(err)
-		}
-		err = zw.Close()
-		if err != nil {
-			panic(err)
-		}
-
-		compBytes := b.Bytes()
+		compBytes := make([]byte, 0, len(s.data))
+		compBytes = encoder.EncodeAll(s.data, compBytes)
 
 		req := &dynamodb.WriteRequest{
 			PutRequest: &dynamodb.PutRequest{
