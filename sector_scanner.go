@@ -5,6 +5,7 @@ import "errors"
 type sectorIterator struct {
 	f                *file
 	lastSectorOffset int64
+	sectorSize       int64
 	sectorPtr        *sector
 
 	offset        int64
@@ -12,12 +13,13 @@ type sectorIterator struct {
 	err           error
 }
 
-func (f *file) newSectorIterator(sectorPtr *sector, firstSector int64, lastSectorOffset int64) *sectorIterator {
+func (f *file) newSectorIterator(sectorPtr *sector, firstSector, lastSectorOffset, sectorSize int64) *sectorIterator {
 	return &sectorIterator{
 		f:                f,
 		lastSectorOffset: lastSectorOffset,
 		sectorPtr:        sectorPtr,
 		offset:           firstSector,
+		sectorSize:       sectorSize,
 	}
 }
 
@@ -47,7 +49,7 @@ func (i *sectorIterator) Next() bool {
 	*i.sectorPtr = i.cachedSectors[0]
 	i.cachedSectors = i.cachedSectors[1:]
 
-	i.offset = i.sectorPtr.offset + defaultSectorSize
+	i.offset = i.sectorPtr.offset + i.sectorSize
 
 	return true
 }
