@@ -92,7 +92,11 @@ func lsFilesAction(cmd *cobra.Command, args []string) {
 		if k == hKey || k == rKey {
 			continue
 		}
-		fmt.Printf("%s %s\n", k, *v.S)
+		if verboseOutput {
+			fmt.Printf("%s %s\n", k, *v.S)
+		} else {
+			fmt.Printf("%s\n", k)
+		}
 	}
 }
 
