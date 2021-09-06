@@ -28,18 +28,27 @@ const (
 	rKey = "range_key"
 )
 
-type Option struct {
-}
-
 func New(dynamoClient *dynamodb.DynamoDB, table string, opts ...Option) sqlite3vfs.VFS {
+
+	options := options{
+		sectorSize: defaultSectorSize,
+	}
+	for _, opt := range opts {
+		err := opt.setOption(&options)
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	ownerIDBytes := make([]byte, 8)
 	if _, err := rand.Read(ownerIDBytes); err != nil {
 		panic(err)
 	}
 	return &vfs{
-		db:      dynamoClient,
-		table:   table,
-		ownerID: hex.EncodeToString(ownerIDBytes),
+		db:         dynamoClient,
+		table:      table,
+		ownerID:    hex.EncodeToString(ownerIDBytes),
+		sectorSize: options.sectorSize,
 	}
 }
 
@@ -47,13 +56,15 @@ type vfs struct {
 	db      *dynamodb.DynamoDB
 	table   string
 	ownerID string
+
+	sectorSize int64
 }
 
 func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sqlite3vfs.OpenFlag, error) {
 	meta := fileMetaV1{
 		MetaVersion: 1,
 		OrigName:    name,
-		SectorSize:  defaultSectorSize,
+		SectorSize:  v.sectorSize,
 		CompressAlg: "zstd",
 	}
 
@@ -302,7 +313,7 @@ func (f *file) ReadAt(p []byte, off int64) (int, error) {
 	lastSector := f.sectorForPos(lastByte)
 
 	var sect sector
-	iter := f.newSectorIterator(&sect, firstSector, lastSector)
+	iter := f.newSectorIterator(&sect, firstSector, lastSector, f.sectorSize)
 
 	var (
 		n     int
@@ -390,7 +401,7 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 	lastSectorOffset := (off + int64(len(b))) - ((off + int64(len(b))) % f.sectorSize)
 
 	var sect sector
-	iter := f.newSectorIterator(&sect, firstSector, lastSectorOffset)
+	iter := f.newSectorIterator(&sect, firstSector, lastSectorOffset, f.sectorSize)
 
 	// fill all but last sector
 	var (
