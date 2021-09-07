@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	mode        = flag.String("mode", "local", "local|donutdb")
+	mode        = flag.String("mode", "local", "local|donutdb|local-dynamo")
 	dynamoTable = flag.String("dynamo-table", "", "Table to use for donutDB")
 	region      = flag.String("region", "us-east-1", "AWS Region")
 )
@@ -51,7 +51,7 @@ func main() {
 		})
 		dynamoClient := dynamodb.New(sess)
 
-		vfs := donutdb.New(dynamoClient, *dynamoTable)
+		vfs := donutdb.New(dynamoClient, *dynamoTable, donutdb.WithSectorSize(4096))
 		err := sqlite3vfs.RegisterVFS("donutdb", vfs)
 		if err != nil {
 			log.Fatalf("Register VFS err: %s", err)
@@ -66,8 +66,33 @@ func main() {
 			connStr: connStr,
 		}
 		b.run()
-	}
+	} else if *mode == "local-dynamo" {
+		serverInfo, err := setupDynamoServer()
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer serverInfo.Cleanup()
 
+		dynamoTable = &serverInfo.TableName
+
+		name := fmt.Sprintf("/%d.db", time.Now().Nanosecond())
+
+		vfs := donutdb.New(serverInfo.db, *dynamoTable, donutdb.WithSectorSize(4096))
+		err = sqlite3vfs.RegisterVFS("donutdb", vfs)
+		if err != nil {
+			log.Fatalf("Register VFS err: %s", err)
+		}
+
+		defer vfs.Delete(name, true)
+
+		connStr := fmt.Sprintf("file://%s?vfs=donutdb", name)
+
+		b := benchSuite{
+			mode:    *mode,
+			connStr: connStr,
+		}
+		b.run()
+	}
 }
 
 type benchSuite struct {
@@ -158,7 +183,7 @@ func (b *benchSuite) run() {
 			continue
 		}
 
-		log.Printf("mode=%s check=%s(%d) took=%s", b.mode, check.name, i, d)
+		log.Printf("mode=%s check=%s(%d) took=%dms", b.mode, check.name, i, d.Milliseconds())
 	}
 }
 
