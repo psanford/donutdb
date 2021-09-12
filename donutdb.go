@@ -700,7 +700,6 @@ func (f *file) FileSize() (retSize int64, retErr error) {
 	size := sector.offset + int64(len(sector.data))
 
 	if size > f.cachedSize {
-		log.Printf("filesize bigger than cache: real=%d cache=%d", size, f.cachedSize)
 		f.cachedSize = size
 	} else if size < f.cachedSize {
 		log.Fatalf("filesize smaller than cache: real=%d cache=%d", size, f.cachedSize)
