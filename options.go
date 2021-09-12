@@ -1,11 +1,14 @@
 package donutdb
 
+import "io"
+
 type Option interface {
 	setOption(*options) error
 }
 
 type options struct {
-	sectorSize int64
+	sectorSize      int64
+	changeLogWriter io.Writer
 }
 
 type sectorSizeOption struct {
@@ -20,5 +23,20 @@ func (o sectorSizeOption) setOption(opts *options) error {
 func WithSectorSize(s int64) Option {
 	return sectorSizeOption{
 		sectorSize: s,
+	}
+}
+
+type changeLogOption struct {
+	changeLogWriter io.Writer
+}
+
+func (o changeLogOption) setOption(opts *options) error {
+	opts.changeLogWriter = o.changeLogWriter
+	return nil
+}
+
+func WithChangeLogWriter(w io.Writer) Option {
+	return &changeLogOption{
+		changeLogWriter: w,
 	}
 }
