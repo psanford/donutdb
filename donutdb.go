@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,7 +20,7 @@ import (
 )
 
 const (
-	defaultSectorSize = 1 << 17
+	defaultSectorSize = 1 << 16
 
 	fileMetaKey    = "file-meta-v1"
 	fileDataPrefix = "file-v1-"
@@ -349,6 +350,8 @@ type file struct {
 	closed     bool
 	vfs        *vfs
 
+	cachedSize int64
+
 	lockManager lockManager
 }
 
@@ -435,16 +438,15 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 		r := changeLogRecord{
 			TS:     time.Now(),
 			Action: "WriteAtStart",
+			P:      b,
+			Off:    off,
 			FName:  f.rawName,
-
-			Off: off,
 		}
 		f.vfs.changeLogWriter.Encode(r)
 		defer func() {
 			r := changeLogRecord{
 				TS:     time.Now(),
 				Action: "WriteAtComplete",
-				P:      b,
 				Off:    off,
 				FName:  f.rawName,
 
@@ -469,6 +471,12 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 	firstSector := f.sectorForPos(off)
 
 	oldLastSector := f.sectorForPos(oldFileSize)
+
+	defer func() {
+		if off+int64(len(b)) > oldFileSize {
+			f.cachedSize = off + int64(len(b))
+		}
+	}()
 
 	secWriter := &sectorWriter{
 		f: f,
@@ -662,7 +670,7 @@ func (f *file) Sync(flag sqlite3vfs.SyncType) error {
 	return nil
 }
 
-func (f *file) FileSize() (int64, error) {
+func (f *file) FileSize() (retSize int64, retErr error) {
 	if f.vfs.changeLogWriter != nil {
 		r := changeLogRecord{
 			TS:     time.Now(),
@@ -672,9 +680,11 @@ func (f *file) FileSize() (int64, error) {
 		f.vfs.changeLogWriter.Encode(r)
 		defer func() {
 			r := changeLogRecord{
-				TS:     time.Now(),
-				Action: "FileSizeComplete",
-				FName:  f.rawName,
+				TS:       time.Now(),
+				Action:   "FileSizeComplete",
+				FName:    f.rawName,
+				RetCount: int(retSize),
+				RetError: retErr,
 			}
 			f.vfs.changeLogWriter.Encode(r)
 		}()
@@ -687,7 +697,16 @@ func (f *file) FileSize() (int64, error) {
 		return 0, err
 	}
 
-	return sector.offset + int64(len(sector.data)), nil
+	size := sector.offset + int64(len(sector.data))
+
+	if size > f.cachedSize {
+		log.Printf("filesize bigger than cache: real=%d cache=%d", size, f.cachedSize)
+		f.cachedSize = size
+	} else if size < f.cachedSize {
+		log.Fatalf("filesize smaller than cache: real=%d cache=%d", size, f.cachedSize)
+	}
+
+	return size, nil
 }
 
 func (f *file) Lock(elock sqlite3vfs.LockType) (retErr error) {
@@ -793,7 +812,27 @@ func (f *file) SectorSize() int64 {
 }
 
 func (f *file) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
-	return sqlite3vfs.IocapAtomic64K | sqlite3vfs.IocapSafeAppend | sqlite3vfs.IocapSequential
+	c := sqlite3vfs.IocapSafeAppend | sqlite3vfs.IocapSequential
+	switch f.sectorSize {
+	case 1 << 9:
+		c |= sqlite3vfs.IocapAtomic512
+	case 1 << 10:
+		c |= sqlite3vfs.IocapAtomic1K
+	case 1 << 11:
+		c |= sqlite3vfs.IocapAtomic2K
+	case 1 << 12:
+		c |= sqlite3vfs.IocapAtomic4K
+	case 1 << 13:
+		c |= sqlite3vfs.IocapAtomic8K
+	case 1 << 14:
+		c |= sqlite3vfs.IocapAtomic16K
+	case 1 << 15:
+		c |= sqlite3vfs.IocapAtomic32K
+	case 1 << 16:
+		c |= sqlite3vfs.IocapAtomic64K
+	}
+
+	return c
 }
 
 func dynamoKey(hashKey string, rangeKey int) map[string]*dynamodb.AttributeValue {

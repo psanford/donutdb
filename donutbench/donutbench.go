@@ -134,54 +134,54 @@ func (b *benchSuite) run() {
 			name: "select_without_index",
 			run:  b.selectWithoutIndex,
 		},
-		// {
-		// 	name: "select_on_string_comparision",
-		// 	run:  b.selectOnStringComparison,
-		// },
-		// {
-		// 	name: "create_index",
-		// 	run:  b.createIndex,
-		// },
-		// {
-		// 	name: "select_with_index",
-		// 	run:  b.selectWithIndex,
-		// },
-		// {
-		// 	name: "update_without_index",
-		// 	run:  b.updateWithoutIndex,
-		// },
-		// {
-		// 	name: "update_with_index",
-		// 	run:  b.updateWithIndex,
-		// },
-		// {
-		// 	name: "update_text_with_index",
-		// 	run:  b.textUpdateWithIndex,
-		// },
-		// {
-		// 	name: "insert_from_select",
-		// 	run:  b.insertFromSelect,
-		// },
-		// {
-		// 	name: "delete_without_index",
-		// 	run:  b.deleteWithoutIndex,
-		// },
-		// {
-		// 	name: "delete_with_index",
-		// 	run:  b.deleteWithIndex,
-		// },
-		// {
-		// 	name: "big_insert_after_big_delete",
-		// 	run:  b.bigInsertAfterBigDelete,
-		// },
-		// {
-		// 	name: "big_delete_after_many_small_inserts",
-		// 	run:  b.bigDeleteManySmallInserts,
-		// },
-		// {
-		// 	name: "drop_table",
-		// 	run:  b.dropTable,
-		// },
+		{
+			name: "select_on_string_comparision",
+			run:  b.selectOnStringComparison,
+		},
+		{
+			name: "create_index",
+			run:  b.createIndex,
+		},
+		{
+			name: "select_with_index",
+			run:  b.selectWithIndex,
+		},
+		{
+			name: "update_without_index",
+			run:  b.updateWithoutIndex,
+		},
+		{
+			name: "update_with_index",
+			run:  b.updateWithIndex,
+		},
+		{
+			name: "update_text_with_index",
+			run:  b.textUpdateWithIndex,
+		},
+		{
+			name: "insert_from_select",
+			run:  b.insertFromSelect,
+		},
+		{
+			name: "delete_without_index",
+			run:  b.deleteWithoutIndex,
+		},
+		{
+			name: "delete_with_index",
+			run:  b.deleteWithIndex,
+		},
+		{
+			name: "big_insert_after_big_delete",
+			run:  b.bigInsertAfterBigDelete,
+		},
+		{
+			name: "big_delete_after_many_small_inserts",
+			run:  b.bigDeleteManySmallInserts,
+		},
+		{
+			name: "drop_table",
+			run:  b.dropTable,
+		},
 	}
 
 	for i, check := range checks {
