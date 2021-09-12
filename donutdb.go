@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -44,12 +45,18 @@ func New(dynamoClient *dynamodb.DynamoDB, table string, opts ...Option) sqlite3v
 	if _, err := rand.Read(ownerIDBytes); err != nil {
 		panic(err)
 	}
-	return &vfs{
+	v := vfs{
 		db:         dynamoClient,
 		table:      table,
 		ownerID:    hex.EncodeToString(ownerIDBytes),
 		sectorSize: options.sectorSize,
 	}
+
+	if options.changeLogWriter != nil {
+		v.changeLogWriter = json.NewEncoder(options.changeLogWriter)
+	}
+
+	return &v
 }
 
 type vfs struct {
@@ -58,9 +65,31 @@ type vfs struct {
 	ownerID string
 
 	sectorSize int64
+
+	changeLogWriter *json.Encoder
 }
 
-func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sqlite3vfs.OpenFlag, error) {
+func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.File, retFlag sqlite3vfs.OpenFlag, retErr error) {
+	if v.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:       time.Now(),
+			Action:   "OpenStart",
+			ArgName:  name,
+			ArgFlags: int(flags),
+		}
+		v.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:       time.Now(),
+				Action:   "OpenComplete",
+				ArgName:  name,
+				ArgFlags: int(flags),
+				RetError: retErr,
+			}
+			v.changeLogWriter.Encode(r)
+		}()
+	}
+
 	meta := fileMetaV1{
 		MetaVersion: 1,
 		OrigName:    name,
@@ -154,7 +183,25 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sql
 	return nil, flags, errors.New("failed to get/create file metadata too many times due to races")
 }
 
-func (v *vfs) Delete(name string, dirSync bool) error {
+func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
+	if v.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:      time.Now(),
+			Action:  "DeleteStart",
+			ArgName: name,
+		}
+		v.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:       time.Now(),
+				Action:   "DeleteComplete",
+				ArgName:  name,
+				RetError: retErr,
+			}
+			v.changeLogWriter.Encode(r)
+		}()
+	}
+
 	existing, err := v.db.Query(&dynamodb.QueryInput{
 		TableName:            &v.table,
 		Limit:                aws.Int64(1),
@@ -238,7 +285,25 @@ func (v *vfs) Delete(name string, dirSync bool) error {
 	return nil
 }
 
-func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
+func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (retOk bool, retErr error) {
+	if v.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:      time.Now(),
+			Action:  "AccessStart",
+			ArgName: name,
+		}
+		v.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:       time.Now(),
+				Action:   "AccessComplete",
+				ArgName:  name,
+				RetError: retErr,
+			}
+			v.changeLogWriter.Encode(r)
+		}()
+	}
+
 	existing, err := v.db.Query(&dynamodb.QueryInput{
 		TableName:            &v.table,
 		Limit:                aws.Int64(1),
@@ -296,7 +361,30 @@ func (f *file) Close() error {
 	return nil
 }
 
-func (f *file) ReadAt(p []byte, off int64) (int, error) {
+func (f *file) ReadAt(p []byte, off int64) (retN int, retErr error) {
+	if f.vfs.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:     time.Now(),
+			Action: "ReadAtStart",
+			FName:  f.rawName,
+			Off:    off,
+		}
+		f.vfs.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:     time.Now(),
+				Action: "ReadAtComplete",
+				P:      p,
+				Off:    off,
+				FName:  f.rawName,
+
+				RetCount: retN,
+				RetError: retErr,
+			}
+			f.vfs.changeLogWriter.Encode(r)
+		}()
+	}
+
 	if f.closed {
 		return 0, os.ErrClosed
 	}
@@ -343,6 +431,30 @@ func (f *file) ReadAt(p []byte, off int64) (int, error) {
 }
 
 func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
+	if f.vfs.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:     time.Now(),
+			Action: "WriteAtStart",
+			FName:  f.rawName,
+
+			Off: off,
+		}
+		f.vfs.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:     time.Now(),
+				Action: "WriteAtComplete",
+				P:      b,
+				Off:    off,
+				FName:  f.rawName,
+
+				RetCount: n,
+				RetError: err,
+			}
+			f.vfs.changeLogWriter.Encode(r)
+		}()
+	}
+
 	if f.closed {
 		return 0, os.ErrClosed
 	}
@@ -470,7 +582,26 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 	return writeCount, nil
 }
 
-func (f *file) Truncate(size int64) error {
+func (f *file) Truncate(size int64) (retErr error) {
+	if f.vfs.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:     time.Now(),
+			Action: "TruncStart",
+			FName:  f.rawName,
+			Off:    size,
+		}
+		f.vfs.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:       time.Now(),
+				Action:   "TruncComplete",
+				FName:    f.rawName,
+				RetError: retErr,
+			}
+			f.vfs.changeLogWriter.Encode(r)
+		}()
+	}
+
 	fileSize, err := f.FileSize()
 	if err != nil {
 		return err
@@ -510,10 +641,45 @@ func (f *file) sectorForPos(pos int64) int64 {
 }
 
 func (f *file) Sync(flag sqlite3vfs.SyncType) error {
+	// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX ??
+	if f.vfs.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:     time.Now(),
+			Action: "SyncStart",
+			FName:  f.rawName,
+		}
+		f.vfs.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:     time.Now(),
+				Action: "SyncComplete",
+				FName:  f.rawName,
+			}
+			f.vfs.changeLogWriter.Encode(r)
+		}()
+	}
+
 	return nil
 }
 
 func (f *file) FileSize() (int64, error) {
+	if f.vfs.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:     time.Now(),
+			Action: "FileSizeStart",
+			FName:  f.rawName,
+		}
+		f.vfs.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:     time.Now(),
+				Action: "FileSizeComplete",
+				FName:  f.rawName,
+			}
+			f.vfs.changeLogWriter.Encode(r)
+		}()
+	}
+
 	sector, err := f.getLastSector()
 	if err == sectorNotFoundErr {
 		return 0, nil
@@ -524,12 +690,31 @@ func (f *file) FileSize() (int64, error) {
 	return sector.offset + int64(len(sector.data)), nil
 }
 
-func (f *file) Lock(elock sqlite3vfs.LockType) error {
+func (f *file) Lock(elock sqlite3vfs.LockType) (retErr error) {
 	//    UNLOCKED -> SHARED
 	//    SHARED -> RESERVED
 	//    SHARED -> (PENDING) -> EXCLUSIVE
 	//    RESERVED -> (PENDING) -> EXCLUSIVE
 	//    PENDING -> EXCLUSIVE
+
+	if f.vfs.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:       time.Now(),
+			Action:   "LockStart",
+			FName:    f.rawName,
+			ArgFlags: int(elock),
+		}
+		f.vfs.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:       time.Now(),
+				Action:   "LockComplete",
+				FName:    f.rawName,
+				RetError: retErr,
+			}
+			f.vfs.changeLogWriter.Encode(r)
+		}()
+	}
 
 	curLevel := f.lockManager.level()
 
@@ -553,11 +738,53 @@ func (f *file) Lock(elock sqlite3vfs.LockType) error {
 	return f.lockManager.lock(elock)
 }
 
-func (f *file) Unlock(elock sqlite3vfs.LockType) error {
+func (f *file) Unlock(elock sqlite3vfs.LockType) (retErr error) {
+	if f.vfs.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:       time.Now(),
+			Action:   "UnlockStart",
+			FName:    f.rawName,
+			ArgFlags: int(elock),
+		}
+		f.vfs.changeLogWriter.Encode(r)
+		defer func() {
+			r := changeLogRecord{
+				TS:       time.Now(),
+				Action:   "UnlockComplete",
+				FName:    f.rawName,
+				RetError: retErr,
+			}
+			f.vfs.changeLogWriter.Encode(r)
+		}()
+	}
+
 	return f.lockManager.unlock(elock)
 }
 
-func (f *file) CheckReservedLock() (bool, error) {
+func (f *file) CheckReservedLock() (retB bool, retErr error) {
+	if f.vfs.changeLogWriter != nil {
+		r := changeLogRecord{
+			TS:     time.Now(),
+			Action: "CheckReservedLockStart",
+			FName:  f.rawName,
+		}
+		f.vfs.changeLogWriter.Encode(r)
+		defer func() {
+			c := 0
+			if retB {
+				c = 1
+			}
+			r := changeLogRecord{
+				TS:       time.Now(),
+				Action:   "CheckReservedLockComplete",
+				FName:    f.rawName,
+				RetCount: c,
+				RetError: retErr,
+			}
+			f.vfs.changeLogWriter.Encode(r)
+		}()
+	}
+
 	return f.lockManager.checkReservedLock()
 }
 

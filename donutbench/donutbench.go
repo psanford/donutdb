@@ -51,8 +51,13 @@ func main() {
 		})
 		dynamoClient := dynamodb.New(sess)
 
-		vfs := donutdb.New(dynamoClient, *dynamoTable, donutdb.WithSectorSize(4096))
-		err := sqlite3vfs.RegisterVFS("donutdb", vfs)
+		clf, err := os.Create("/tmp/donut_change_log")
+		if err != nil {
+			panic(err)
+		}
+
+		vfs := donutdb.New(dynamoClient, *dynamoTable, donutdb.WithSectorSize(4096), donutdb.WithChangeLogWriter(clf))
+		err = sqlite3vfs.RegisterVFS("donutdb", vfs)
 		if err != nil {
 			log.Fatalf("Register VFS err: %s", err)
 		}
@@ -77,7 +82,12 @@ func main() {
 
 		name := fmt.Sprintf("/%d.db", time.Now().Nanosecond())
 
-		vfs := donutdb.New(serverInfo.db, *dynamoTable, donutdb.WithSectorSize(4096))
+		clf, err := os.Create("/tmp/donut_change_log")
+		if err != nil {
+			panic(err)
+		}
+
+		vfs := donutdb.New(serverInfo.db, *dynamoTable, donutdb.WithSectorSize(4096), donutdb.WithChangeLogWriter(clf))
 		err = sqlite3vfs.RegisterVFS("donutdb", vfs)
 		if err != nil {
 			log.Fatalf("Register VFS err: %s", err)
@@ -208,7 +218,7 @@ type insertStatement struct {
 
 // 1000 INSERTs
 func (b *benchSuite) insert() (time.Duration, error) {
-	inserts := make([]insertStatement, 1000)
+	inserts := make([]insertStatement, 100)
 	for i := 0; i < len(inserts); i++ {
 		b := rand.Intn(100000)
 		c := num2words.Convert(b)
@@ -382,7 +392,7 @@ func (b *benchSuite) createIndex() (time.Duration, error) {
 func (b *benchSuite) selectWithIndex() (time.Duration, error) {
 	t0 := time.Now()
 
-	for i := 0; i < 5000; i++ {
+	for i := 0; i < 500; i++ {
 		start := i * 100
 		end := start + 100
 
