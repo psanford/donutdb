@@ -134,54 +134,54 @@ func (b *benchSuite) run() {
 			name: "select_without_index",
 			run:  b.selectWithoutIndex,
 		},
-		{
-			name: "select_on_string_comparision",
-			run:  b.selectOnStringComparison,
-		},
-		{
-			name: "create_index",
-			run:  b.createIndex,
-		},
-		{
-			name: "select_with_index",
-			run:  b.selectWithIndex,
-		},
-		{
-			name: "update_without_index",
-			run:  b.updateWithoutIndex,
-		},
-		{
-			name: "update_with_index",
-			run:  b.updateWithIndex,
-		},
-		{
-			name: "update_text_with_index",
-			run:  b.textUpdateWithIndex,
-		},
-		{
-			name: "insert_from_select",
-			run:  b.insertFromSelect,
-		},
-		{
-			name: "delete_without_index",
-			run:  b.deleteWithoutIndex,
-		},
-		{
-			name: "delete_with_index",
-			run:  b.deleteWithIndex,
-		},
-		{
-			name: "big_insert_after_big_delete",
-			run:  b.bigInsertAfterBigDelete,
-		},
-		{
-			name: "big_delete_after_many_small_inserts",
-			run:  b.bigDeleteManySmallInserts,
-		},
-		{
-			name: "drop_table",
-			run:  b.dropTable,
-		},
+		// {
+		// 	name: "select_on_string_comparision",
+		// 	run:  b.selectOnStringComparison,
+		// },
+		// {
+		// 	name: "create_index",
+		// 	run:  b.createIndex,
+		// },
+		// {
+		// 	name: "select_with_index",
+		// 	run:  b.selectWithIndex,
+		// },
+		// {
+		// 	name: "update_without_index",
+		// 	run:  b.updateWithoutIndex,
+		// },
+		// {
+		// 	name: "update_with_index",
+		// 	run:  b.updateWithIndex,
+		// },
+		// {
+		// 	name: "update_text_with_index",
+		// 	run:  b.textUpdateWithIndex,
+		// },
+		// {
+		// 	name: "insert_from_select",
+		// 	run:  b.insertFromSelect,
+		// },
+		// {
+		// 	name: "delete_without_index",
+		// 	run:  b.deleteWithoutIndex,
+		// },
+		// {
+		// 	name: "delete_with_index",
+		// 	run:  b.deleteWithIndex,
+		// },
+		// {
+		// 	name: "big_insert_after_big_delete",
+		// 	run:  b.bigInsertAfterBigDelete,
+		// },
+		// {
+		// 	name: "big_delete_after_many_small_inserts",
+		// 	run:  b.bigDeleteManySmallInserts,
+		// },
+		// {
+		// 	name: "drop_table",
+		// 	run:  b.dropTable,
+		// },
 	}
 
 	for i, check := range checks {
@@ -234,10 +234,15 @@ func (b *benchSuite) insert() (time.Duration, error) {
 		return 0, err
 	}
 
+	t1 := time.Now()
 	for i, s := range inserts {
 		_, err = b.db.Exec("INSERT INTO t1 VALUES(?, ?, ?)", i, s.b, s.c)
 		if err != nil {
 			return 0, err
+		}
+		if i%10 == 0 {
+			log.Printf("== %d took %s", i, time.Since(t1))
+			t1 = time.Now()
 		}
 	}
 
@@ -392,6 +397,7 @@ func (b *benchSuite) createIndex() (time.Duration, error) {
 func (b *benchSuite) selectWithIndex() (time.Duration, error) {
 	t0 := time.Now()
 
+	t1 := time.Now()
 	for i := 0; i < 500; i++ {
 		start := i * 100
 		end := start + 100
@@ -402,6 +408,11 @@ func (b *benchSuite) selectWithIndex() (time.Duration, error) {
 		err := r.Scan(&count, &avg)
 		if err != nil {
 			return 0, err
+		}
+
+		if i%10 == 0 {
+			log.Printf("== %d took %s", i, time.Since(t1))
+			t1 = time.Now()
 		}
 	}
 

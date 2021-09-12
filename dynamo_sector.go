@@ -17,6 +17,7 @@ func (f *file) getSector(sectorOffset int64) (*sector, error) {
 
 	out, err := f.vfs.db.Query(&dynamodb.QueryInput{
 		TableName:              &f.vfs.table,
+		ConsistentRead:         aws.Bool(true),
 		KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
 		ProjectionExpression:   aws.String("bytes"),
 		Limit:                  aws.Int64(1),
@@ -63,6 +64,7 @@ func (f *file) getSector(sectorOffset int64) (*sector, error) {
 func (f *file) getLastSector() (*sector, error) {
 	out, err := f.vfs.db.Query(&dynamodb.QueryInput{
 		TableName:              &f.vfs.table,
+		ConsistentRead:         aws.Bool(true),
 		KeyConditionExpression: aws.String("hash_key = :hk"),
 		ProjectionExpression:   aws.String("range_key, bytes"),
 		ScanIndexForward:       aws.Bool(false),
@@ -129,6 +131,7 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 		endSectorStr := strconv.FormatInt(endSector, 10)
 
 		out, err := f.vfs.db.Query(&dynamodb.QueryInput{
+			ConsistentRead:         aws.Bool(true),
 			TableName:              &f.vfs.table,
 			KeyConditionExpression: &query,
 			ProjectionExpression:   aws.String("range_key, bytes"),
