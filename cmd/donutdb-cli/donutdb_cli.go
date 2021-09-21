@@ -102,7 +102,7 @@ func lsFilesAction(cmd *cobra.Command, args []string) {
 
 func pullFileCommand() *cobra.Command {
 	cmd := cobra.Command{
-		Use:   "pull <table> <filename>",
+		Use:   "pull <table> <filename> <dst_filename>",
 		Short: "Pull file from DynamoDB to local filesystem",
 		Run:   pullFileAction,
 	}
@@ -111,16 +111,17 @@ func pullFileCommand() *cobra.Command {
 }
 
 func pullFileAction(cmd *cobra.Command, args []string) {
-	if len(args) < 2 {
-		log.Fatalf("Usage: ls <dynamodb_table> <file>")
+	if len(args) < 3 {
+		log.Fatalf("Usage: ls <dynamodb_table> <file> <dstfilename>")
 	}
 
 	table := args[0]
 	filename := args[1]
+	dstFilename := args[2]
 
-	outFile, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0755)
+	outFile, err := os.OpenFile(dstFilename, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0755)
 	if err != nil {
-		log.Fatalf("File %s already exists on disk, won't overwrite", filename)
+		log.Fatalf("File %s already exists on disk, won't overwrite", dstFilename)
 	}
 	defer outFile.Close()
 
@@ -200,7 +201,7 @@ func pushFileAction(cmd *cobra.Command, args []string) {
 	}
 
 	// use our sector size as our tmp buffer
-	buf := make([]byte, 1<<17)
+	buf := make([]byte, 1<<16)
 
 	_, err = io.CopyBuffer(w, localFile, buf)
 	if err != nil {
