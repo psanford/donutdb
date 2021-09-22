@@ -702,7 +702,7 @@ func (f *file) FileSize() (retSize int64, retErr error) {
 	if size > f.cachedSize {
 		f.cachedSize = size
 	} else if size < f.cachedSize {
-		log.Fatalf("filesize smaller than cache: real=%d cache=%d", size, f.cachedSize)
+		log.Printf("filesize smaller than cache: real=%d cache=%d", size, f.cachedSize)
 	}
 
 	return size, nil
