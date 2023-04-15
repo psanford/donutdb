@@ -486,33 +486,35 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 		f: f,
 	}
 
-	for sectorStart := oldLastSector; sectorStart < firstSector; sectorStart += f.sectorSize {
+	lastSectorOffset := (off + int64(len(b))) - ((off + int64(len(b))) % f.sectorSize)
+
+	// if we're writing after the end of the file, we need to fill any intermediary
+	// sectors with zeros.
+	for sectorStart := oldLastSector; sectorStart < lastSectorOffset; sectorStart += f.sectorSize {
 		sectorLastBytePossible := sectorStart + f.sectorSize - 1
-		if off > int64(sectorLastBytePossible) {
-			if oldFileSize <= sectorStart {
-				err = secWriter.writeSector(&sector{
-					offset: sectorStart,
-					data:   make([]byte, f.sectorSize),
-				})
-				if err != nil {
-					return writeCount, fmt.Errorf("fill sector (off=%d) err: %w", sectorStart, err)
-				}
-				// create sector as empty
-			} else if oldFileSize < int64(sectorLastBytePossible) {
-				// fill existing sector
-				sect, err := f.getSector(sectorStart)
-				if err != nil {
-					return 0, err
-				}
-				fill := make([]byte, f.sectorSize-int64(len(sect.data)))
-				sect.data = append(sect.data, fill...)
-				err = secWriter.writeSector(sect)
-				if err != nil {
-					return 0, err
-				}
-			} else {
-				// this is a full sector, don't do anything
+		if oldFileSize <= sectorStart {
+			// create sector as empty
+			err = secWriter.writeSector(&sector{
+				offset: sectorStart,
+				data:   make([]byte, f.sectorSize),
+			})
+			if err != nil {
+				return writeCount, fmt.Errorf("fill sector (off=%d) err: %w", sectorStart, err)
 			}
+		} else if oldFileSize < int64(sectorLastBytePossible) {
+			// fill existing sector
+			sect, err := f.getSector(sectorStart)
+			if err != nil {
+				return 0, err
+			}
+			fill := make([]byte, f.sectorSize-int64(len(sect.data)))
+			sect.data = append(sect.data, fill...)
+			err = secWriter.writeSector(sect)
+			if err != nil {
+				return 0, err
+			}
+		} else {
+			// this is a full sector, don't do anything
 		}
 	}
 
@@ -521,19 +523,14 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 		return 0, err
 	}
 
-	// we've hydrated all preceeding data
-	lastSectorOffset := (off + int64(len(b))) - ((off + int64(len(b))) % f.sectorSize)
-
 	var sect sector
 	iter := f.newSectorIterator(&sect, firstSector, lastSectorOffset, f.sectorSize)
 
-	// fill all but last sector
 	var (
 		idx      int
 		iterDone bool
 	)
 	for sec := firstSector; sec <= lastSectorOffset; sec += f.sectorSize {
-
 		if iterDone {
 			sect = sector{
 				offset: sec,
@@ -544,7 +541,12 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 			if !iter.Next() {
 				iterDone = true
 				err := iter.Close()
-				if err != nil {
+				if err == sectorNotFoundErr {
+					if sec != lastSectorOffset {
+
+						return writeCount, fmt.Errorf("get sector err: %w", err)
+					}
+				} else if err != nil {
 					return writeCount, fmt.Errorf("get sector err: %w", err)
 				}
 				sect = sector{
@@ -592,6 +594,39 @@ func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
 	}
 
 	return writeCount, nil
+}
+
+func (f *file) sanityCheckSectors() error {
+	fileSize, err := f.FileSize()
+	if err != nil {
+		return err
+	}
+
+	lastSector := f.sectorForPos(fileSize)
+	var sect sector
+	iter := f.newSectorIterator(&sect, 0, lastSector, f.sectorSize)
+
+	var n int64
+	for iter.Next() {
+		expectOffset := n * f.sectorSize
+		if sect.offset != int64(expectOffset) {
+			iter.Close()
+			return fmt.Errorf("sector %d gotOffset=%d expectedOffset=%d", n, sect.offset, expectOffset)
+		}
+		n++
+	}
+	err = iter.Close()
+	if err != nil {
+		return err
+	}
+
+	n--
+
+	if n*f.sectorSize != lastSector {
+		return fmt.Errorf("did not reach final sector: last seen n=%d offset=%d expected=%d", n, n*f.sectorSize, lastSector)
+	}
+
+	return nil
 }
 
 func (f *file) Truncate(size int64) (retErr error) {
