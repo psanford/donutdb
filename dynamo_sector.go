@@ -114,9 +114,7 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 
 	if startSector == endSector {
 		sect, err := f.getSector(firstSector)
-		if err == sectorNotFoundErr {
-			return nil, nil
-		} else if err != nil {
+		if err != nil {
 			return nil, err
 		}
 		return []sector{*sect}, nil

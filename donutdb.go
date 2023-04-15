@@ -407,8 +407,9 @@ func (f *file) ReadAt(p []byte, off int64) (retN int, retErr error) {
 	iter := f.newSectorIterator(&sect, firstSector, lastSector, f.sectorSize)
 
 	var (
-		n     int
-		first = true
+		n         int
+		first     = true
+		iterCount int
 	)
 	for iter.Next() {
 		if first {
@@ -420,9 +421,12 @@ func (f *file) ReadAt(p []byte, off int64) (retN int, retErr error) {
 
 		nn := copy(p[n:], sect.data)
 		n += nn
+		iterCount++
 	}
 	err = iter.Close()
-	if err != nil {
+	if err == sectorNotFoundErr && lastByte >= fileSize {
+		return n, io.EOF
+	} else if err != nil {
 		return n, err
 	}
 
