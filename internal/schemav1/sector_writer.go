@@ -1,26 +1,27 @@
-package donutdb
+package schemav1
 
 import (
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/klauspost/compress/zstd"
+	"github.com/psanford/donutdb/internal/dynamo"
 )
 
-// sectorWriter is a buffered writer for sectors.
+// SectorWriter is a buffered writer for sectors.
 // You must call flush() and check its error to ensure
 // all sectors are actually written
-type sectorWriter struct {
-	f   *file
+type SectorWriter struct {
+	F   *File
 	err error
 
-	pendingWriteSectors  []sector
+	pendingWriteSectors  []Sector
 	pendingDeleteSectors []int64
 }
 
 var encoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
 
-func (w *sectorWriter) writeSector(s *sector) error {
+func (w *SectorWriter) WriteSector(s *Sector) error {
 	if w.err != nil {
 		return w.err
 	}
@@ -28,13 +29,13 @@ func (w *sectorWriter) writeSector(s *sector) error {
 	w.pendingWriteSectors = append(w.pendingWriteSectors, *s)
 
 	if len(w.pendingWriteSectors)+len(w.pendingDeleteSectors) == 25 {
-		return w.flush()
+		return w.Flush()
 	}
 
 	return nil
 }
 
-func (w *sectorWriter) deleteSector(s int64) error {
+func (w *SectorWriter) DeleteSector(s int64) error {
 	if w.err != nil {
 		return w.err
 	}
@@ -42,13 +43,13 @@ func (w *sectorWriter) deleteSector(s int64) error {
 	w.pendingDeleteSectors = append(w.pendingDeleteSectors, s)
 
 	if len(w.pendingWriteSectors)+len(w.pendingDeleteSectors) == 25 {
-		return w.flush()
+		return w.Flush()
 	}
 
 	return nil
 }
 
-func (w *sectorWriter) flush() error {
+func (w *SectorWriter) Flush() error {
 	if w.err != nil {
 		return w.err
 	}
@@ -60,18 +61,18 @@ func (w *sectorWriter) flush() error {
 	reqs := make([]*dynamodb.WriteRequest, 0, len(w.pendingWriteSectors)+len(w.pendingDeleteSectors))
 
 	for _, s := range w.pendingWriteSectors {
-		rangeKeyStr := strconv.FormatInt(s.offset, 10)
+		rangeKeyStr := strconv.FormatInt(s.Offset, 10)
 
-		compBytes := make([]byte, 0, len(s.data))
-		compBytes = encoder.EncodeAll(s.data, compBytes)
+		compBytes := make([]byte, 0, len(s.Data))
+		compBytes = encoder.EncodeAll(s.Data, compBytes)
 
 		req := &dynamodb.WriteRequest{
 			PutRequest: &dynamodb.PutRequest{
 				Item: map[string]*dynamodb.AttributeValue{
-					hKey: {
-						S: &w.f.dataRowKey,
+					dynamo.HKey: {
+						S: &w.F.dataRowKey,
 					},
-					rKey: {
+					dynamo.RKey: {
 						N: &rangeKeyStr,
 					},
 					"bytes": {
@@ -88,10 +89,10 @@ func (w *sectorWriter) flush() error {
 		req := &dynamodb.WriteRequest{
 			DeleteRequest: &dynamodb.DeleteRequest{
 				Key: map[string]*dynamodb.AttributeValue{
-					hKey: {
-						S: &w.f.dataRowKey,
+					dynamo.HKey: {
+						S: &w.F.dataRowKey,
 					},
-					rKey: {
+					dynamo.RKey: {
 						N: &rangeKeyStr,
 					},
 				},
@@ -101,10 +102,10 @@ func (w *sectorWriter) flush() error {
 	}
 
 	items := map[string][]*dynamodb.WriteRequest{
-		w.f.vfs.table: reqs,
+		w.F.table: reqs,
 	}
 
-	_, err := w.f.vfs.db.BatchWriteItem(&dynamodb.BatchWriteItemInput{
+	_, err := w.F.db.BatchWriteItem(&dynamodb.BatchWriteItemInput{
 		RequestItems: items,
 	})
 

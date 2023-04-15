@@ -6,147 +6,28 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"math/rand"
-	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/google/go-cmp/cmp"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/psanford/donutdb/internal/dynamo"
+	"github.com/psanford/donutdb/internal/dynamotest"
+	"github.com/psanford/donutdb/internal/schemav1"
 	"github.com/psanford/sqlite3vfs"
 )
 
-func setupDynamoServer() (*dynamoServerInfo, error) {
-	info := dynamoServerInfo{
-		TableName: os.Getenv("DONUTDB_DYNAMODB_TEST_TABLE_NAME"),
-		Addr:      os.Getenv("DONUTDB_DYNAMODB_TEST_ADDR"),
-		Region:    os.Getenv("DONUTDB_DYNAMODB_TEST_REGION"),
-	}
-
-	// if set, test will try to start local dynamo db jar
-	dynamoLocalDir := os.Getenv("DONUTDB_DYNAMODB_LOCAL_DIR")
-
-	var cleanups []func()
-	info.Cleanup = func() {
-		for _, cleanupFunc := range cleanups {
-			cleanupFunc()
-		}
-	}
-
-	if dynamoLocalDir != "" {
-		log.Printf("Starting local dyamodb server")
-		cmd := exec.Command("java", "-Djava.library.path="+filepath.Join(dynamoLocalDir, "DynamoDBLocal_lib"), "-jar", filepath.Join(dynamoLocalDir, "DynamoDBLocal.jar"), "-sharedDb")
-		err := cmd.Start()
-		if err != nil {
-			return nil, err
-		}
-		cleanups = append(cleanups, func() {
-			cmd.Process.Kill()
-		})
-
-		if info.Addr == "" {
-			info.Addr = "http://localhost:8000"
-		}
-		if info.Region == "" {
-			info.Region = "us-east-2"
-		}
-
-		os.Setenv("AWS_ACCESS_KEY_ID", "fakeMyKeyId")
-		os.Setenv("AWS_SECRET_ACCESS_KEY", "fakeSecretAccessKey")
-
-		deadline := time.Now().Add(5 * time.Second)
-		var connectOK bool
-		for time.Now().Before(deadline) {
-			resp, err := http.Get(info.Addr)
-			if err != nil {
-				time.Sleep(1 * time.Millisecond)
-				continue
-			}
-			resp.Body.Close()
-			connectOK = true
-			break
-		}
-
-		if !connectOK {
-			return nil, fmt.Errorf("Failed to conncet to test dynamodb server within deadline")
-		}
-	}
-
-	if info.Region == "" {
-		return nil, fmt.Errorf("Missing required environment variables to connect to dynamodb (either local or remote)")
-	}
-
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		Config: aws.Config{
-			Region:     &info.Region,
-			Endpoint:   &info.Addr,
-			MaxRetries: aws.Int(0),
-			// LogLevel: aws.LogLevel(aws.LogDebug),
-			// Logger:   aws.NewDefaultLogger(),
-		},
-	}))
-	info.db = dynamodb.New(sess)
-
-	if info.TableName == "" {
-		info.TableName = fmt.Sprintf("donutdb-test-%d", time.Now().UnixNano())
-
-		_, err := info.db.CreateTable(&dynamodb.CreateTableInput{
-			TableName: &info.TableName,
-			AttributeDefinitions: []*dynamodb.AttributeDefinition{
-				{
-					AttributeName: aws.String("hash_key"),
-					AttributeType: aws.String("S"),
-				},
-				{
-					AttributeName: aws.String("range_key"),
-					AttributeType: aws.String("N"),
-				},
-			},
-			KeySchema: []*dynamodb.KeySchemaElement{
-				{
-					AttributeName: aws.String("hash_key"),
-					KeyType:       aws.String("HASH"),
-				},
-				{
-					AttributeName: aws.String("range_key"),
-					KeyType:       aws.String("RANGE"),
-				},
-			},
-			BillingMode: aws.String("PAY_PER_REQUEST"),
-		})
-
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return &info, nil
-}
-
-type dynamoServerInfo struct {
-	Region    string
-	Addr      string
-	TableName string
-	Cleanup   func()
-	db        *dynamodb.DynamoDB
-}
-
 func TestDonutDB(t *testing.T) {
-	serverInfo, err := setupDynamoServer()
+	serverInfo, err := dynamotest.SetupDynamoServer()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.db, serverInfo.TableName)
+	vfs := New(serverInfo.DB, serverInfo.TableName)
 
 	err = sqlite3vfs.RegisterVFS("dynamodb", vfs)
 	if err != nil {
@@ -255,14 +136,14 @@ title text
 }
 
 func TestAccessDelete(t *testing.T) {
-	serverInfo, err := setupDynamoServer()
+	serverInfo, err := dynamotest.SetupDynamoServer()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.db, serverInfo.TableName)
+	vfs := New(serverInfo.DB, serverInfo.TableName)
 
 	fname := fmt.Sprintf("tearfully-coital-%d", time.Now().UnixNano())
 
@@ -327,14 +208,14 @@ func TestAccessDelete(t *testing.T) {
 }
 
 func TestReadWriteFile(t *testing.T) {
-	serverInfo, err := setupDynamoServer()
+	serverInfo, err := dynamotest.SetupDynamoServer()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.db, serverInfo.TableName)
+	vfs := New(serverInfo.DB, serverInfo.TableName)
 
 	fname := fmt.Sprintf("undervalues-reverend-%d", time.Now().UnixNano())
 	vfsF, _, err := vfs.Open(fname, 0)
@@ -471,14 +352,14 @@ func TestReadWriteFile(t *testing.T) {
 }
 
 func TestReadWriteCases(t *testing.T) {
-	serverInfo, err := setupDynamoServer()
+	serverInfo, err := dynamotest.SetupDynamoServer()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.db, serverInfo.TableName)
+	vfs := New(serverInfo.DB, serverInfo.TableName)
 
 	// these are test cases triggered by simple fuzzing
 	// try to convert into a minimal test case when possible
@@ -509,7 +390,7 @@ func TestReadWriteCases(t *testing.T) {
 					size:   1,
 				},
 				{
-					offset: defaultSectorSize,
+					offset: dynamo.DefaultSectorSize,
 					size:   10,
 				},
 			},
@@ -524,8 +405,8 @@ func TestReadWriteCases(t *testing.T) {
 					size:   1,
 				},
 				{
-					offset: defaultSectorSize * 2,
-					size:   defaultSectorSize,
+					offset: dynamo.DefaultSectorSize * 2,
+					size:   dynamo.DefaultSectorSize,
 				},
 			},
 		},
@@ -589,14 +470,14 @@ func TestReadWriteCases(t *testing.T) {
 }
 
 func TestErrorOnBadSector(t *testing.T) {
-	serverInfo, err := setupDynamoServer()
+	serverInfo, err := dynamotest.SetupDynamoServer()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.db, serverInfo.TableName, WithSectorSize(1024))
+	vfs := New(serverInfo.DB, serverInfo.TableName, WithSectorSize(1024))
 
 	fname := fmt.Sprintf("theosophic-tempera-%d", time.Now().UnixNano())
 
@@ -604,7 +485,7 @@ func TestErrorOnBadSector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ff := f.(*file)
+	ff := f.(*schemav1.File)
 
 	data := make([]byte, 458)
 	rand.Read(data)
@@ -614,7 +495,7 @@ func TestErrorOnBadSector(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = ff.sanityCheckSectors()
+	err = ff.SanityCheckSectors()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -628,14 +509,14 @@ func TestErrorOnBadSector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ff = f.(*file)
+	ff = f.(*schemav1.File)
 
 	_, err = f.WriteAt(data, 4060)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = ff.sanityCheckSectors()
+	err = ff.SanityCheckSectors()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,27 +530,27 @@ func TestErrorOnBadSector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ff = f.(*file)
+	ff = f.(*schemav1.File)
 
-	err = ff.sanityCheckSectors()
+	err = ff.SanityCheckSectors()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// intentionally write a sector without filling
 	// in the intermediate
-	secWriter := &sectorWriter{
-		f: ff,
+	secWriter := &schemav1.SectorWriter{
+		F: ff,
 	}
 
 	rand.Read(data)
 
-	secWriter.writeSector(&sector{
-		offset: 1 << 20,
-		data:   data,
+	secWriter.WriteSector(&schemav1.Sector{
+		Offset: 1 << 20,
+		Data:   data,
 	})
 
-	err = secWriter.flush()
+	err = secWriter.Flush()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,12 +569,12 @@ func TestErrorOnBadSector(t *testing.T) {
 
 	reader := io.NewSectionReader(f, 0, fileSize)
 	data, err = io.ReadAll(reader)
-	if err != sectorNotFoundErr {
-		t.Errorf("Expected sectorNotFoundErr but got %s", err)
+	if err != dynamo.SectorNotFoundErr {
+		t.Errorf("Expected dynamo.SectorNotFoundErr but got %s", err)
 	}
-	ff = f.(*file)
+	ff = f.(*schemav1.File)
 
-	err = ff.sanityCheckSectors()
+	err = ff.SanityCheckSectors()
 	if err == nil {
 		t.Fatalf("Expected sanity err but got none")
 	}

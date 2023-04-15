@@ -7,33 +7,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
-	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/psanford/donutdb/internal/dynamo"
+	"github.com/psanford/donutdb/internal/schemav1"
 	"github.com/psanford/sqlite3vfs"
 )
 
-const (
-	defaultSectorSize = 1 << 16
-
-	fileMetaKey    = "file-meta-v1"
-	fileDataPrefix = "file-v1-"
-	fileLockPrefix = "lock-global-v1-"
-
-	hKey = "hash_key"
-	rKey = "range_key"
-)
-
 func New(dynamoClient *dynamodb.DynamoDB, table string, opts ...Option) sqlite3vfs.VFS {
-
 	options := options{
-		sectorSize: defaultSectorSize,
+		sectorSize: dynamo.DefaultSectorSize,
 	}
 	for _, opt := range opts {
 		err := opt.setOption(&options)
@@ -91,8 +77,8 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 		}()
 	}
 
-	meta := fileMetaV1{
-		MetaVersion: 1,
+	meta := dynamo.FileMetaV1V2{
+		MetaVersion: 2,
 		OrigName:    name,
 		SectorSize:  v.sectorSize,
 		CompressAlg: "zstd",
@@ -109,10 +95,10 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				"#fname": aws.String(name),
 			},
 			Key: map[string]*dynamodb.AttributeValue{
-				hKey: {
-					S: aws.String(fileMetaKey),
+				dynamo.HKey: {
+					S: aws.String(dynamo.FileMetaKey),
 				},
-				rKey: {
+				dynamo.RKey: {
 					N: aws.String("0"),
 				},
 			},
@@ -130,8 +116,8 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 			}
 
 			meta.RandID = base64.URLEncoding.EncodeToString(fileIDBytes)
-			meta.DataRowKey = fileDataPrefix + meta.RandID + "-" + name
-			meta.LockRowKey = fileLockPrefix + meta.RandID + "-" + name
+			meta.DataRowKey = dynamo.FileDataPrefix + meta.RandID + "-" + name
+			meta.LockRowKey = dynamo.FileLockPrefix + meta.RandID + "-" + name
 
 			metaBytes, err := json.Marshal(meta)
 			if err != nil {
@@ -143,10 +129,10 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				UpdateExpression:    aws.String("SET #fname=:meta"),
 				ConditionExpression: aws.String("attribute_not_exists(#fname)"),
 				Key: map[string]*dynamodb.AttributeValue{
-					hKey: {
-						S: aws.String(fileMetaKey),
+					dynamo.HKey: {
+						S: aws.String(dynamo.FileMetaKey),
 					},
-					rKey: {
+					dynamo.RKey: {
 						N: aws.String("0"),
 					},
 				},
@@ -168,7 +154,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, err
 			}
 
-			f := v.fileFromMeta(&meta)
+			f := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
 			return f, flags, nil
 		} else {
 			err = json.Unmarshal([]byte(*existing.Item[name].S), &meta)
@@ -176,7 +162,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, fmt.Errorf("decode file metadata err: %w", err)
 			}
 
-			f := v.fileFromMeta(&meta)
+			f := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
 			return f, flags, nil
 		}
 	}
@@ -214,7 +200,7 @@ func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
 		KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":hk": {
-				S: aws.String(fileMetaKey),
+				S: aws.String(dynamo.FileMetaKey),
 			},
 			":rk": {
 				N: aws.String("0"),
@@ -232,7 +218,7 @@ func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
 
 	metaBytes := *existing.Items[0][name].S
 
-	var meta fileMetaV1
+	var meta dynamo.FileMetaV1V2
 	err = json.Unmarshal([]byte(metaBytes), &meta)
 	if err != nil {
 		return fmt.Errorf("unmarshal file meta v1 err: %w", err)
@@ -243,10 +229,10 @@ func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
 		UpdateExpression:    aws.String("REMOVE #fname"),
 		ConditionExpression: aws.String("#fname=:meta"),
 		Key: map[string]*dynamodb.AttributeValue{
-			hKey: {
-				S: aws.String(fileMetaKey),
+			dynamo.HKey: {
+				S: aws.String(dynamo.FileMetaKey),
 			},
-			rKey: {
+			dynamo.RKey: {
 				N: aws.String("0"),
 			},
 		},
@@ -264,22 +250,9 @@ func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
 		return err
 	}
 
-	f := v.fileFromMeta(&meta)
+	f := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
 
-	lastSec, err := f.getLastSector()
-	if err != nil {
-		return err
-	}
-
-	secWriter := &sectorWriter{
-		f: f,
-	}
-
-	for sectToDelete := lastSec.offset; sectToDelete >= 0; sectToDelete -= f.sectorSize {
-		secWriter.deleteSector(sectToDelete)
-	}
-
-	err = secWriter.flush()
+	err = f.DeleteSectors()
 	if err != nil {
 		return err
 	}
@@ -316,7 +289,7 @@ func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (retOk bool, retEr
 		KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":hk": {
-				S: aws.String(fileMetaKey),
+				S: aws.String(dynamo.FileMetaKey),
 			},
 			":rk": {
 				N: aws.String("0"),
@@ -340,569 +313,4 @@ func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (retOk bool, retEr
 func (vfs *vfs) FullPathname(name string) string {
 	name = filepath.Clean(string(filepath.Separator) + name)
 	return name
-}
-
-type file struct {
-	dataRowKey string
-	rawName    string
-	randID     string
-	sectorSize int64
-	closed     bool
-	vfs        *vfs
-
-	cachedSize int64
-
-	lockManager lockManager
-}
-
-func (f *file) Close() error {
-	f.closed = true
-	err := f.lockManager.close()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (f *file) ReadAt(p []byte, off int64) (retN int, retErr error) {
-	if f.vfs.changeLogWriter != nil {
-		r := changeLogRecord{
-			TS:     time.Now(),
-			Action: "ReadAtStart",
-			FName:  f.rawName,
-			Off:    off,
-		}
-		f.vfs.changeLogWriter.Encode(r)
-		defer func() {
-			r := changeLogRecord{
-				TS:     time.Now(),
-				Action: "ReadAtComplete",
-				P:      p,
-				Off:    off,
-				FName:  f.rawName,
-
-				RetCount: retN,
-				RetError: retErr,
-			}
-			f.vfs.changeLogWriter.Encode(r)
-		}()
-	}
-
-	if f.closed {
-		return 0, os.ErrClosed
-	}
-
-	firstSector := f.sectorForPos(off)
-
-	fileSize, err := f.FileSize()
-	if err != nil {
-		return 0, err
-	}
-
-	lastByte := off + int64(len(p)) - 1
-
-	lastSector := f.sectorForPos(lastByte)
-
-	var sect sector
-	iter := f.newSectorIterator(&sect, firstSector, lastSector, f.sectorSize)
-
-	var (
-		n         int
-		first     = true
-		iterCount int
-	)
-	for iter.Next() {
-		if first {
-			startIndex := off % f.sectorSize
-			n = copy(p, sect.data[startIndex:])
-			first = false
-			continue
-		}
-
-		nn := copy(p[n:], sect.data)
-		n += nn
-		iterCount++
-	}
-	err = iter.Close()
-	if err == sectorNotFoundErr && lastByte >= fileSize {
-		return n, io.EOF
-	} else if err != nil {
-		return n, err
-	}
-
-	if lastByte >= fileSize {
-		return n, io.EOF
-	}
-
-	return n, nil
-}
-
-func (f *file) WriteAt(b []byte, off int64) (n int, err error) {
-	if f.vfs.changeLogWriter != nil {
-		r := changeLogRecord{
-			TS:     time.Now(),
-			Action: "WriteAtStart",
-			P:      b,
-			Off:    off,
-			FName:  f.rawName,
-		}
-		f.vfs.changeLogWriter.Encode(r)
-		defer func() {
-			r := changeLogRecord{
-				TS:     time.Now(),
-				Action: "WriteAtComplete",
-				Off:    off,
-				FName:  f.rawName,
-
-				RetCount: n,
-				RetError: err,
-			}
-			f.vfs.changeLogWriter.Encode(r)
-		}()
-	}
-
-	if f.closed {
-		return 0, os.ErrClosed
-	}
-
-	var writeCount int
-
-	oldFileSize, err := f.FileSize()
-	if err != nil {
-		return writeCount, fmt.Errorf("filesize err: %w", err)
-	}
-
-	firstSector := f.sectorForPos(off)
-
-	oldLastSector := f.sectorForPos(oldFileSize)
-
-	defer func() {
-		if off+int64(len(b)) > oldFileSize {
-			f.cachedSize = off + int64(len(b))
-		}
-	}()
-
-	secWriter := &sectorWriter{
-		f: f,
-	}
-
-	lastSectorOffset := (off + int64(len(b))) - ((off + int64(len(b))) % f.sectorSize)
-
-	// if we're writing after the end of the file, we need to fill any intermediary
-	// sectors with zeros.
-	for sectorStart := oldLastSector; sectorStart < lastSectorOffset; sectorStart += f.sectorSize {
-		sectorLastBytePossible := sectorStart + f.sectorSize - 1
-		if oldFileSize <= sectorStart {
-			// create sector as empty
-			err = secWriter.writeSector(&sector{
-				offset: sectorStart,
-				data:   make([]byte, f.sectorSize),
-			})
-			if err != nil {
-				return writeCount, fmt.Errorf("fill sector (off=%d) err: %w", sectorStart, err)
-			}
-		} else if oldFileSize < int64(sectorLastBytePossible) {
-			// fill existing sector
-			sect, err := f.getSector(sectorStart)
-			if err != nil {
-				return 0, err
-			}
-			fill := make([]byte, f.sectorSize-int64(len(sect.data)))
-			sect.data = append(sect.data, fill...)
-			err = secWriter.writeSector(sect)
-			if err != nil {
-				return 0, err
-			}
-		} else {
-			// this is a full sector, don't do anything
-		}
-	}
-
-	err = secWriter.flush()
-	if err != nil {
-		return 0, err
-	}
-
-	var sect sector
-	iter := f.newSectorIterator(&sect, firstSector, lastSectorOffset, f.sectorSize)
-
-	var (
-		idx      int
-		iterDone bool
-	)
-	for sec := firstSector; sec <= lastSectorOffset; sec += f.sectorSize {
-		if iterDone {
-			sect = sector{
-				offset: sec,
-				data:   make([]byte, 0),
-			}
-
-		} else {
-			if !iter.Next() {
-				iterDone = true
-				err := iter.Close()
-				if err == sectorNotFoundErr {
-					if sec != lastSectorOffset {
-
-						return writeCount, fmt.Errorf("get sector err: %w", err)
-					}
-				} else if err != nil {
-					return writeCount, fmt.Errorf("get sector err: %w", err)
-				}
-				sect = sector{
-					offset: sec,
-					data:   make([]byte, 0),
-				}
-			}
-		}
-
-		var offsetIntoSector int64
-		if idx == 0 {
-			offsetIntoSector = off % f.sectorSize
-		}
-
-		if sect.offset < lastSectorOffset && int64(len(sect.data)) < f.sectorSize {
-			fill := make([]byte, f.sectorSize-int64(len(sect.data)))
-			sect.data = append(sect.data, fill...)
-		} else if sect.offset == lastSectorOffset && len(sect.data) < int(offsetIntoSector)+len(b) {
-			fill := make([]byte, int(offsetIntoSector)+len(b)-len(sect.data))
-			sect.data = append(sect.data, fill...)
-		}
-
-		n := copy(sect.data[offsetIntoSector:], b)
-		b = b[n:]
-
-		sectCopy := sect
-		err = secWriter.writeSector(&sectCopy)
-		if err != nil {
-			return writeCount, fmt.Errorf("write sector err: %w", err)
-		}
-		writeCount += n
-		idx++
-	}
-
-	if !iterDone {
-		err = iter.Close()
-		if err != nil {
-			return writeCount, fmt.Errorf("get sector err: %w", err)
-		}
-	}
-
-	err = secWriter.flush()
-	if err != nil {
-		return 0, err
-	}
-
-	return writeCount, nil
-}
-
-func (f *file) sanityCheckSectors() error {
-	fileSize, err := f.FileSize()
-	if err != nil {
-		return err
-	}
-
-	lastSector := f.sectorForPos(fileSize)
-	var sect sector
-	iter := f.newSectorIterator(&sect, 0, lastSector, f.sectorSize)
-
-	var n int64
-	for iter.Next() {
-		expectOffset := n * f.sectorSize
-		if sect.offset != int64(expectOffset) {
-			iter.Close()
-			return fmt.Errorf("sector %d gotOffset=%d expectedOffset=%d", n, sect.offset, expectOffset)
-		}
-		n++
-	}
-	err = iter.Close()
-	if err != nil {
-		return err
-	}
-
-	n--
-
-	if n*f.sectorSize != lastSector {
-		return fmt.Errorf("did not reach final sector: last seen n=%d offset=%d expected=%d", n, n*f.sectorSize, lastSector)
-	}
-
-	return nil
-}
-
-func (f *file) Truncate(size int64) (retErr error) {
-	if f.vfs.changeLogWriter != nil {
-		r := changeLogRecord{
-			TS:     time.Now(),
-			Action: "TruncStart",
-			FName:  f.rawName,
-			Off:    size,
-		}
-		f.vfs.changeLogWriter.Encode(r)
-		defer func() {
-			r := changeLogRecord{
-				TS:       time.Now(),
-				Action:   "TruncComplete",
-				FName:    f.rawName,
-				RetError: retErr,
-			}
-			f.vfs.changeLogWriter.Encode(r)
-		}()
-	}
-
-	fileSize, err := f.FileSize()
-	if err != nil {
-		return err
-	}
-
-	if size >= fileSize {
-		return nil
-	}
-
-	firstSector := f.sectorForPos(size)
-
-	sect, err := f.getSector(firstSector)
-	if err != nil {
-		return err
-	}
-
-	sect.data = sect.data[:size%f.sectorSize]
-
-	secWriter := &sectorWriter{
-		f: f,
-	}
-
-	secWriter.writeSector(sect)
-
-	lastSector := f.sectorForPos(fileSize)
-
-	startSector := firstSector + f.sectorSize
-	for sectToDelete := startSector; sectToDelete <= lastSector; sectToDelete += f.sectorSize {
-		secWriter.deleteSector(sectToDelete)
-	}
-
-	return secWriter.flush()
-}
-
-func (f *file) sectorForPos(pos int64) int64 {
-	return pos - (pos % f.sectorSize)
-}
-
-func (f *file) Sync(flag sqlite3vfs.SyncType) error {
-	// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX ??
-	if f.vfs.changeLogWriter != nil {
-		r := changeLogRecord{
-			TS:     time.Now(),
-			Action: "SyncStart",
-			FName:  f.rawName,
-		}
-		f.vfs.changeLogWriter.Encode(r)
-		defer func() {
-			r := changeLogRecord{
-				TS:     time.Now(),
-				Action: "SyncComplete",
-				FName:  f.rawName,
-			}
-			f.vfs.changeLogWriter.Encode(r)
-		}()
-	}
-
-	return nil
-}
-
-func (f *file) FileSize() (retSize int64, retErr error) {
-	if f.vfs.changeLogWriter != nil {
-		r := changeLogRecord{
-			TS:     time.Now(),
-			Action: "FileSizeStart",
-			FName:  f.rawName,
-		}
-		f.vfs.changeLogWriter.Encode(r)
-		defer func() {
-			r := changeLogRecord{
-				TS:       time.Now(),
-				Action:   "FileSizeComplete",
-				FName:    f.rawName,
-				RetCount: int(retSize),
-				RetError: retErr,
-			}
-			f.vfs.changeLogWriter.Encode(r)
-		}()
-	}
-
-	sector, err := f.getLastSector()
-	if err == sectorNotFoundErr {
-		return 0, nil
-	} else if err != nil {
-		return 0, err
-	}
-
-	size := sector.offset + int64(len(sector.data))
-
-	if size > f.cachedSize {
-		f.cachedSize = size
-	} else if size < f.cachedSize {
-		log.Printf("filesize smaller than cache: real=%d cache=%d", size, f.cachedSize)
-	}
-
-	return size, nil
-}
-
-func (f *file) Lock(elock sqlite3vfs.LockType) (retErr error) {
-	//    UNLOCKED -> SHARED
-	//    SHARED -> RESERVED
-	//    SHARED -> (PENDING) -> EXCLUSIVE
-	//    RESERVED -> (PENDING) -> EXCLUSIVE
-	//    PENDING -> EXCLUSIVE
-
-	if f.vfs.changeLogWriter != nil {
-		r := changeLogRecord{
-			TS:       time.Now(),
-			Action:   "LockStart",
-			FName:    f.rawName,
-			ArgFlags: int(elock),
-		}
-		f.vfs.changeLogWriter.Encode(r)
-		defer func() {
-			r := changeLogRecord{
-				TS:       time.Now(),
-				Action:   "LockComplete",
-				FName:    f.rawName,
-				RetError: retErr,
-			}
-			f.vfs.changeLogWriter.Encode(r)
-		}()
-	}
-
-	curLevel := f.lockManager.level()
-
-	if elock <= curLevel {
-		return nil
-	}
-
-	//  (1) We never move from unlocked to anything higher than shared lock.
-	if curLevel == sqlite3vfs.LockNone && elock > sqlite3vfs.LockShared {
-		return errors.New("invalid lock transition requested")
-	}
-	//  (2) SQLite never explicitly requests a pendig lock.
-	if elock == sqlite3vfs.LockPending {
-		return errors.New("invalid Lock() request for state pending")
-	}
-	//  (3) A shared lock is always held when a reserve lock is requested.
-	if elock == sqlite3vfs.LockReserved && curLevel != sqlite3vfs.LockShared {
-		return errors.New("can only transition to Reserved lock from Shared lock")
-	}
-
-	return f.lockManager.lock(elock)
-}
-
-func (f *file) Unlock(elock sqlite3vfs.LockType) (retErr error) {
-	if f.vfs.changeLogWriter != nil {
-		r := changeLogRecord{
-			TS:       time.Now(),
-			Action:   "UnlockStart",
-			FName:    f.rawName,
-			ArgFlags: int(elock),
-		}
-		f.vfs.changeLogWriter.Encode(r)
-		defer func() {
-			r := changeLogRecord{
-				TS:       time.Now(),
-				Action:   "UnlockComplete",
-				FName:    f.rawName,
-				RetError: retErr,
-			}
-			f.vfs.changeLogWriter.Encode(r)
-		}()
-	}
-
-	return f.lockManager.unlock(elock)
-}
-
-func (f *file) CheckReservedLock() (retB bool, retErr error) {
-	if f.vfs.changeLogWriter != nil {
-		r := changeLogRecord{
-			TS:     time.Now(),
-			Action: "CheckReservedLockStart",
-			FName:  f.rawName,
-		}
-		f.vfs.changeLogWriter.Encode(r)
-		defer func() {
-			c := 0
-			if retB {
-				c = 1
-			}
-			r := changeLogRecord{
-				TS:       time.Now(),
-				Action:   "CheckReservedLockComplete",
-				FName:    f.rawName,
-				RetCount: c,
-				RetError: retErr,
-			}
-			f.vfs.changeLogWriter.Encode(r)
-		}()
-	}
-
-	return f.lockManager.checkReservedLock()
-}
-
-func (f *file) SectorSize() int64 {
-	return f.sectorSize
-}
-
-func (f *file) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
-	c := sqlite3vfs.IocapSafeAppend | sqlite3vfs.IocapSequential
-	switch f.sectorSize {
-	case 1 << 9:
-		c |= sqlite3vfs.IocapAtomic512
-	case 1 << 10:
-		c |= sqlite3vfs.IocapAtomic1K
-	case 1 << 11:
-		c |= sqlite3vfs.IocapAtomic2K
-	case 1 << 12:
-		c |= sqlite3vfs.IocapAtomic4K
-	case 1 << 13:
-		c |= sqlite3vfs.IocapAtomic8K
-	case 1 << 14:
-		c |= sqlite3vfs.IocapAtomic16K
-	case 1 << 15:
-		c |= sqlite3vfs.IocapAtomic32K
-	case 1 << 16:
-		c |= sqlite3vfs.IocapAtomic64K
-	}
-
-	return c
-}
-
-func dynamoKey(hashKey string, rangeKey int) map[string]*dynamodb.AttributeValue {
-	rangeKeyStr := strconv.Itoa(rangeKey)
-	return map[string]*dynamodb.AttributeValue{
-		hKey: {
-			S: &hashKey,
-		},
-		rKey: {
-			N: &rangeKeyStr,
-		},
-	}
-}
-
-type fileMetaV1 struct {
-	MetaVersion int    `json:"meta_version"`
-	SectorSize  int64  `json:"sector_size"`
-	OrigName    string `json:"orig_name"`
-	RandID      string `json:"rand_id"`
-	DataRowKey  string `json:"data_row_key"`
-	LockRowKey  string `json:"lock_row_key"`
-	CompressAlg string `json:"compress_alg"`
-}
-
-func (v *vfs) fileFromMeta(meta *fileMetaV1) *file {
-	return &file{
-		dataRowKey: fileDataPrefix + meta.RandID + "-" + meta.OrigName,
-		rawName:    meta.OrigName,
-		randID:     meta.RandID,
-		sectorSize: meta.SectorSize,
-		vfs:        v,
-
-		lockManager: newGlobalLockManger(v.db, v.table, meta.LockRowKey, v.ownerID),
-	}
 }

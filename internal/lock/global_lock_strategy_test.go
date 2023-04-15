@@ -1,4 +1,4 @@
-package donutdb
+package lock_test
 
 import (
 	"database/sql"
@@ -7,31 +7,35 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/psanford/donutdb"
+	"github.com/psanford/donutdb/internal/dynamotest"
+	"github.com/psanford/donutdb/internal/lock"
 	"github.com/psanford/sqlite3vfs"
 )
 
 func TestConcurrentAccess(t *testing.T) {
-	serverInfo, err := setupDynamoServer()
+	serverInfo, err := dynamotest.SetupDynamoServer()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	origRenewDuration := renewDuration
-	renewDuration = 50 * time.Millisecond
+	origRenewDuration := lock.RenewDuration
+	lock.RenewDuration = 50 * time.Millisecond
 	defer func() {
-		renewDuration = origRenewDuration
+		lock.RenewDuration = origRenewDuration
 	}()
 
 	defer serverInfo.Cleanup()
 
-	vfs1 := New(serverInfo.db, serverInfo.TableName)
+	vfs1 := donutdb.New(serverInfo.DB, serverInfo.TableName)
 
 	err = sqlite3vfs.RegisterVFS("dynamodb1", vfs1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	vfs2 := New(serverInfo.db, serverInfo.TableName)
+	vfs2 := donutdb.New(serverInfo.DB, serverInfo.TableName)
 	err = sqlite3vfs.RegisterVFS("dynamodb2", vfs2)
 	if err != nil {
 		t.Fatal(err)

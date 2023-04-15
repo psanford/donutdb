@@ -1,4 +1,4 @@
-package donutdb
+package lock
 
 import (
 	"errors"
@@ -9,11 +9,12 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/psanford/donutdb/internal/dynamo"
 	"github.com/psanford/sqlite3vfs"
 )
 
-var deadlineDuration = 2 * time.Second
-var renewDuration = 750 * time.Millisecond
+var DeadlineDuration = 2 * time.Second
+var RenewDuration = 750 * time.Millisecond
 
 type globalLockManager struct {
 	db        *dynamodb.DynamoDB
@@ -30,7 +31,7 @@ type globalLockManager struct {
 	err error
 }
 
-func newGlobalLockManger(db *dynamodb.DynamoDB, table, lockName, owner string) *globalLockManager {
+func NewGlobalLockManger(db *dynamodb.DynamoDB, table, lockName, owner string) *globalLockManager {
 	lm := &globalLockManager{
 		db:       db,
 		table:    table,
@@ -48,7 +49,7 @@ func newGlobalLockManger(db *dynamodb.DynamoDB, table, lockName, owner string) *
 	return lm
 }
 
-func (m *globalLockManager) lock(elock sqlite3vfs.LockType) error {
+func (m *globalLockManager) Lock(elock sqlite3vfs.LockType) error {
 	if m.err != nil {
 		return m.err
 	}
@@ -88,10 +89,10 @@ func (m *globalLockManager) lock(elock sqlite3vfs.LockType) error {
 		ConsistentRead:  aws.Bool(true),
 		AttributesToGet: []*string{aws.String("owner_id"), aws.String("deadline_us")},
 		Key: map[string]*dynamodb.AttributeValue{
-			hKey: {
+			dynamo.HKey: {
 				S: &m.lockName,
 			},
-			rKey: {
+			dynamo.RKey: {
 				N: aws.String("0"),
 			},
 		},
@@ -106,17 +107,17 @@ func (m *globalLockManager) lock(elock sqlite3vfs.LockType) error {
 	if !exists {
 		// no one holds the lock, lets try to get it
 
-		deadline := time.Now().Add(deadlineDuration)
-		deadlineUsS := strconv.FormatInt(unixMicro(deadline), 10)
+		deadline := time.Now().Add(DeadlineDuration)
+		deadlineUsS := strconv.FormatInt(deadline.UnixMicro(), 10)
 
 		_, err = m.db.PutItem(&dynamodb.PutItemInput{
 			TableName:           &m.table,
 			ConditionExpression: aws.String("attribute_not_exists(deadline_us)"),
 			Item: map[string]*dynamodb.AttributeValue{
-				hKey: {
+				dynamo.HKey: {
 					S: &m.lockName,
 				},
-				rKey: {
+				dynamo.RKey: {
 					N: aws.String("0"),
 				},
 				"owner_id": {
@@ -136,11 +137,11 @@ func (m *globalLockManager) lock(elock sqlite3vfs.LockType) error {
 		return err
 	}
 
-	if unixMicro(time.Now()) > oldDeadlineUs {
+	if time.Now().UnixMicro() > oldDeadlineUs {
 		// the existing lock has expired, lets try to take it
 
-		deadline := time.Now().Add(deadlineDuration)
-		deadlineUsS := strconv.FormatInt(unixMicro(deadline), 10)
+		deadline := time.Now().Add(DeadlineDuration)
+		deadlineUsS := strconv.FormatInt(deadline.UnixMicro(), 10)
 
 		_, err = m.db.PutItem(&dynamodb.PutItemInput{
 			TableName:           &m.table,
@@ -154,10 +155,10 @@ func (m *globalLockManager) lock(elock sqlite3vfs.LockType) error {
 				},
 			},
 			Item: map[string]*dynamodb.AttributeValue{
-				hKey: {
+				dynamo.HKey: {
 					S: &m.lockName,
 				},
-				rKey: {
+				dynamo.RKey: {
 					N: aws.String("0"),
 				},
 				"owner_id": {
@@ -176,7 +177,7 @@ func (m *globalLockManager) lock(elock sqlite3vfs.LockType) error {
 	return sqlite3vfs.BusyError
 }
 
-func (m *globalLockManager) unlock(elock sqlite3vfs.LockType) error {
+func (m *globalLockManager) Unlock(elock sqlite3vfs.LockType) error {
 	if m.err != nil {
 		return m.err
 	}
@@ -215,11 +216,11 @@ func (m *globalLockManager) unlock(elock sqlite3vfs.LockType) error {
 	return nil
 }
 
-func (m *globalLockManager) level() sqlite3vfs.LockType {
+func (m *globalLockManager) Level() sqlite3vfs.LockType {
 	return m.lockLevel
 }
 
-func (m *globalLockManager) checkReservedLock() (bool, error) {
+func (m *globalLockManager) CheckReservedLock() (bool, error) {
 	if m.lockLevel > sqlite3vfs.LockNone {
 		// we hold a lock
 		return true, nil
@@ -230,10 +231,10 @@ func (m *globalLockManager) checkReservedLock() (bool, error) {
 		ConsistentRead:  aws.Bool(true),
 		AttributesToGet: []*string{aws.String("owner_id"), aws.String("deadline_us")},
 		Key: map[string]*dynamodb.AttributeValue{
-			hKey: {
+			dynamo.HKey: {
 				S: &m.lockName,
 			},
-			rKey: {
+			dynamo.RKey: {
 				N: aws.String("0"),
 			},
 		},
@@ -253,7 +254,7 @@ func (m *globalLockManager) checkReservedLock() (bool, error) {
 		return false, err
 	}
 
-	if unixMicro(time.Now()) < deadlineUs {
+	if time.Now().UnixMicro() < deadlineUs {
 		// the existing lock is still active
 		return true, nil
 	}
@@ -261,7 +262,7 @@ func (m *globalLockManager) checkReservedLock() (bool, error) {
 	return false, nil
 }
 
-func (m *globalLockManager) close() error {
+func (m *globalLockManager) Close() error {
 	close(m.stopTicker)
 	<-m.heartbeatDone
 
@@ -271,7 +272,7 @@ func (m *globalLockManager) close() error {
 }
 
 func (m *globalLockManager) heartbeatLoop() {
-	ticker := time.NewTicker(renewDuration)
+	ticker := time.NewTicker(RenewDuration)
 	ticker.Stop()
 
 	defer close(m.heartbeatDone)
@@ -290,7 +291,7 @@ func (m *globalLockManager) heartbeatLoop() {
 
 			running = true
 			prevDeadlineUs = startMsg.prevDeadline
-			ticker.Reset(renewDuration)
+			ticker.Reset(RenewDuration)
 		case _, ok := <-m.stopTicker:
 			if !running && ok {
 				// we should only get normal stopTicker events when we
@@ -312,10 +313,10 @@ func (m *globalLockManager) heartbeatLoop() {
 						},
 					},
 					Key: map[string]*dynamodb.AttributeValue{
-						hKey: {
+						dynamo.HKey: {
 							S: &m.lockName,
 						},
-						rKey: {
+						dynamo.RKey: {
 							N: aws.String("0"),
 						},
 					},
@@ -343,8 +344,8 @@ func (m *globalLockManager) heartbeatLoop() {
 				continue
 			}
 
-			deadline := time.Now().Add(deadlineDuration)
-			deadlineUsS := strconv.FormatInt(unixMicro(deadline), 10)
+			deadline := time.Now().Add(DeadlineDuration)
+			deadlineUsS := strconv.FormatInt(deadline.UnixMicro(), 10)
 
 			_, err := m.db.PutItem(&dynamodb.PutItemInput{
 				TableName:           &m.table,
@@ -358,10 +359,10 @@ func (m *globalLockManager) heartbeatLoop() {
 					},
 				},
 				Item: map[string]*dynamodb.AttributeValue{
-					hKey: {
+					dynamo.HKey: {
 						S: &m.lockName,
 					},
-					rKey: {
+					dynamo.RKey: {
 						N: aws.String("0"),
 					},
 					"owner_id": {
@@ -388,9 +389,4 @@ func (m *globalLockManager) heartbeatLoop() {
 
 type startTickerMsg struct {
 	prevDeadline string
-}
-
-// remove once minimum supported version is 1.17 with .UnixMicro()
-func unixMicro(t time.Time) int64 {
-	return t.UnixNano() / 1e3
 }
