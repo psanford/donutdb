@@ -1,6 +1,8 @@
 package donutdb
 
-import "errors"
+import (
+	"errors"
+)
 
 type sectorIterator struct {
 	f                *file
@@ -40,6 +42,9 @@ func (i *sectorIterator) Next() bool {
 		}
 
 		if len(sectors) == 0 {
+			if i.offset < i.lastSectorOffset {
+				i.err = sectorNotFoundErr
+			}
 			return false
 		}
 

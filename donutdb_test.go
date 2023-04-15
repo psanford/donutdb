@@ -588,6 +588,118 @@ func TestReadWriteCases(t *testing.T) {
 	}
 }
 
+func TestErrorOnBadSector(t *testing.T) {
+	serverInfo, err := setupDynamoServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer serverInfo.Cleanup()
+
+	vfs := New(serverInfo.db, serverInfo.TableName, WithSectorSize(1024))
+
+	fname := fmt.Sprintf("theosophic-tempera-%d", time.Now().UnixNano())
+
+	f, _, err := vfs.Open(fname, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ff := f.(*file)
+
+	data := make([]byte, 458)
+	rand.Read(data)
+
+	_, err = f.WriteAt(data, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ff.sanityCheckSectors()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f, _, err = vfs.Open(fname, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ff = f.(*file)
+
+	_, err = f.WriteAt(data, 4060)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ff.sanityCheckSectors()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f, _, err = vfs.Open(fname, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ff = f.(*file)
+
+	err = ff.sanityCheckSectors()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// intentionally write a sector without filling
+	// in the intermediate
+	secWriter := &sectorWriter{
+		f: ff,
+	}
+
+	rand.Read(data)
+
+	secWriter.writeSector(&sector{
+		offset: 1 << 20,
+		data:   data,
+	})
+
+	err = secWriter.flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.Close()
+
+	f, _, err = vfs.Open(fname, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fileSize, err := f.FileSize()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reader := io.NewSectionReader(f, 0, fileSize)
+	data, err = io.ReadAll(reader)
+	if err != sectorNotFoundErr {
+		t.Errorf("Expected sectorNotFoundErr but got %s", err)
+	}
+	ff = f.(*file)
+
+	err = ff.sanityCheckSectors()
+	if err == nil {
+		t.Fatalf("Expected sanity err but got none")
+	}
+
+}
+
 func TestFullPathname(t *testing.T) {
 	checks := []struct {
 		in     string
