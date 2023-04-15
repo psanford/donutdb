@@ -1,4 +1,4 @@
-package donutdb
+package schemav1
 
 import (
 	"errors"
@@ -8,15 +8,16 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/klauspost/compress/zstd"
+	"github.com/psanford/donutdb/internal/dynamo"
 )
 
 var decoder, _ = zstd.NewReader(nil)
 
-func (f *file) getSector(sectorOffset int64) (*sector, error) {
+func (f *File) getSector(sectorOffset int64) (*Sector, error) {
 	rangeKeyStr := strconv.FormatInt(sectorOffset, 10)
 
-	out, err := f.vfs.db.Query(&dynamodb.QueryInput{
-		TableName:              &f.vfs.table,
+	out, err := f.db.Query(&dynamodb.QueryInput{
+		TableName:              &f.table,
 		ConsistentRead:         aws.Bool(false),
 		KeyConditionExpression: aws.String("hash_key = :hk AND range_key = :rk"),
 		ProjectionExpression:   aws.String("bytes"),
@@ -36,7 +37,7 @@ func (f *file) getSector(sectorOffset int64) (*sector, error) {
 	}
 
 	if len(out.Items) == 0 {
-		return nil, sectorNotFoundErr
+		return nil, dynamo.SectorNotFoundErr
 	}
 
 	item := out.Items[0]
@@ -53,17 +54,17 @@ func (f *file) getSector(sectorOffset int64) (*sector, error) {
 		panic(err)
 	}
 
-	s := sector{
-		offset: sectorOffset,
-		data:   sectorData,
+	s := Sector{
+		Offset: sectorOffset,
+		Data:   sectorData,
 	}
 
 	return &s, nil
 }
 
-func (f *file) getLastSector() (*sector, error) {
-	out, err := f.vfs.db.Query(&dynamodb.QueryInput{
-		TableName:              &f.vfs.table,
+func (f *File) getLastSector() (*Sector, error) {
+	out, err := f.db.Query(&dynamodb.QueryInput{
+		TableName:              &f.table,
 		ConsistentRead:         aws.Bool(false),
 		KeyConditionExpression: aws.String("hash_key = :hk"),
 		ProjectionExpression:   aws.String("range_key, bytes"),
@@ -81,17 +82,17 @@ func (f *file) getLastSector() (*sector, error) {
 	}
 
 	if len(out.Items) == 0 {
-		return nil, sectorNotFoundErr
+		return nil, dynamo.SectorNotFoundErr
 	}
 
 	item := out.Items[0]
 
-	if item[rKey].N == nil {
+	if item[dynamo.RKey].N == nil {
 		return nil, fmt.Errorf("range_key is not a number")
 	}
-	sectorOffset, err := strconv.ParseInt(*item[rKey].N, 10, 64)
+	sectorOffset, err := strconv.ParseInt(*item[dynamo.RKey].N, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("range_key does not parse to an int: %s %w", *item[rKey].N, err)
+		return nil, fmt.Errorf("range_key does not parse to an int: %s %w", *item[dynamo.RKey].N, err)
 	}
 
 	compressedSectorData := item["bytes"].B
@@ -102,13 +103,13 @@ func (f *file) getLastSector() (*sector, error) {
 		panic(err)
 	}
 
-	return &sector{
-		offset: sectorOffset,
-		data:   sectorData,
+	return &Sector{
+		Offset: sectorOffset,
+		Data:   sectorData,
 	}, nil
 }
 
-func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
+func (f *File) getSectorRange(firstSector, lastSector int64) ([]Sector, error) {
 	startSector := firstSector
 	endSector := lastSector
 
@@ -117,20 +118,20 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 		if err != nil {
 			return nil, err
 		}
-		return []sector{*sect}, nil
+		return []Sector{*sect}, nil
 	}
 
 	query := "hash_key = :hk AND range_key BETWEEN :first_sector AND :last_sector"
-	var sectors []sector
+	var sectors []Sector
 	prevSectorOffset := firstSector - f.sectorSize
 
 	for {
 		startSectorStr := strconv.FormatInt(startSector, 10)
 		endSectorStr := strconv.FormatInt(endSector, 10)
 
-		out, err := f.vfs.db.Query(&dynamodb.QueryInput{
+		out, err := f.db.Query(&dynamodb.QueryInput{
 			ConsistentRead:         aws.Bool(false),
-			TableName:              &f.vfs.table,
+			TableName:              &f.table,
 			KeyConditionExpression: &query,
 			ProjectionExpression:   aws.String("range_key, bytes"),
 			Limit:                  aws.Int64(1000),
@@ -152,12 +153,12 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 		}
 
 		for _, item := range out.Items {
-			if item[rKey].N == nil {
+			if item[dynamo.RKey].N == nil {
 				return nil, fmt.Errorf("range_key is not a number")
 			}
-			sectorOffset, err := strconv.ParseInt(*item[rKey].N, 10, 64)
+			sectorOffset, err := strconv.ParseInt(*item[dynamo.RKey].N, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("range_key does not parse to an int: %s %w", *item[rKey].N, err)
+				return nil, fmt.Errorf("range_key does not parse to an int: %s %w", *item[dynamo.RKey].N, err)
 			}
 
 			if sectorOffset != prevSectorOffset+f.sectorSize {
@@ -172,9 +173,9 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 				panic(err)
 			}
 
-			sectors = append(sectors, sector{
-				offset: sectorOffset,
-				data:   sectorData,
+			sectors = append(sectors, Sector{
+				Offset: sectorOffset,
+				Data:   sectorData,
 			})
 			prevSectorOffset = sectorOffset
 		}
@@ -184,19 +185,17 @@ func (f *file) getSectorRange(firstSector, lastSector int64) ([]sector, error) {
 		}
 
 		end := sectors[len(sectors)-1]
-		if end.offset == lastSector {
+		if end.Offset == lastSector {
 			break
 		}
 
-		startSector = end.offset + 1
+		startSector = end.Offset + 1
 	}
 
 	return sectors, nil
 }
 
-var sectorNotFoundErr = errors.New("sector not found")
-
-type sector struct {
-	offset int64
-	data   []byte
+type Sector struct {
+	Offset int64
+	Data   []byte
 }

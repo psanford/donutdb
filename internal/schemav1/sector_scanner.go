@@ -1,21 +1,23 @@
-package donutdb
+package schemav1
 
 import (
 	"errors"
+
+	"github.com/psanford/donutdb/internal/dynamo"
 )
 
 type sectorIterator struct {
-	f                *file
+	f                *File
 	lastSectorOffset int64
 	sectorSize       int64
-	sectorPtr        *sector
+	sectorPtr        *Sector
 
 	offset        int64
-	cachedSectors []sector
+	cachedSectors []Sector
 	err           error
 }
 
-func (f *file) newSectorIterator(sectorPtr *sector, firstSector, lastSectorOffset, sectorSize int64) *sectorIterator {
+func (f *File) newSectorIterator(sectorPtr *Sector, firstSector, lastSectorOffset, sectorSize int64) *sectorIterator {
 	return &sectorIterator{
 		f:                f,
 		lastSectorOffset: lastSectorOffset,
@@ -43,7 +45,7 @@ func (i *sectorIterator) Next() bool {
 
 		if len(sectors) == 0 {
 			if i.offset < i.lastSectorOffset {
-				i.err = sectorNotFoundErr
+				i.err = dynamo.SectorNotFoundErr
 			}
 			return false
 		}
@@ -54,7 +56,7 @@ func (i *sectorIterator) Next() bool {
 	*i.sectorPtr = i.cachedSectors[0]
 	i.cachedSectors = i.cachedSectors[1:]
 
-	i.offset = i.sectorPtr.offset + i.sectorSize
+	i.offset = i.sectorPtr.Offset + i.sectorSize
 
 	return true
 }
