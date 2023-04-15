@@ -144,7 +144,18 @@ func pullFileAction(cmd *cobra.Command, args []string) {
 
 	fileReader := io.NewSectionReader(file, 0, size)
 
-	_, err = io.Copy(outFile, fileReader)
+	pr, pw := io.Pipe()
+	go func() {
+		buf0 := make([]byte, 1<<20)
+		_, err = io.CopyBuffer(pw, fileReader, buf0)
+		if err != nil {
+			pw.CloseWithError(err)
+		} else {
+			pw.Close()
+		}
+	}()
+
+	_, err = io.Copy(outFile, pr)
 	if err != nil {
 		outFile.Close()
 		os.Remove(filename)
