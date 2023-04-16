@@ -27,7 +27,7 @@ func TestDonutDB(t *testing.T) {
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.DB, serverInfo.TableName)
+	vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(1))
 
 	err = sqlite3vfs.RegisterVFS("dynamodb", vfs)
 	if err != nil {
@@ -143,7 +143,7 @@ func TestAccessDelete(t *testing.T) {
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.DB, serverInfo.TableName)
+	vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(1))
 
 	fname := fmt.Sprintf("tearfully-coital-%d", time.Now().UnixNano())
 
@@ -215,7 +215,7 @@ func TestReadWriteFile(t *testing.T) {
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.DB, serverInfo.TableName)
+	vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(1))
 
 	fname := fmt.Sprintf("undervalues-reverend-%d", time.Now().UnixNano())
 	vfsF, _, err := vfs.Open(fname, 0)
@@ -359,7 +359,7 @@ func TestReadWriteCases(t *testing.T) {
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.DB, serverInfo.TableName)
+	vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(1))
 
 	// these are test cases triggered by simple fuzzing
 	// try to convert into a minimal test case when possible
@@ -477,7 +477,7 @@ func TestErrorOnBadSector(t *testing.T) {
 
 	defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.DB, serverInfo.TableName, WithSectorSize(1024))
+	vfs := New(serverInfo.DB, serverInfo.TableName, WithSectorSize(1024), WithDefaultSchemaVersion(1))
 
 	fname := fmt.Sprintf("theosophic-tempera-%d", time.Now().UnixNano())
 

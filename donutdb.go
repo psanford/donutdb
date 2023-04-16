@@ -33,23 +33,29 @@ func New(dynamoClient *dynamodb.DynamoDB, table string, opts ...Option) sqlite3v
 		panic(err)
 	}
 	v := vfs{
-		db:         dynamoClient,
-		table:      table,
-		ownerID:    hex.EncodeToString(ownerIDBytes),
-		sectorSize: options.sectorSize,
+		db:                   dynamoClient,
+		table:                table,
+		ownerID:              hex.EncodeToString(ownerIDBytes),
+		sectorSize:           options.sectorSize,
+		defaultSchemaVersion: 2,
 	}
 
 	if options.changeLogWriter != nil {
 		v.changeLogWriter = json.NewEncoder(options.changeLogWriter)
 	}
 
+	if options.defaultSchemaVersion != 0 {
+		v.defaultSchemaVersion = options.defaultSchemaVersion
+	}
+
 	return &v
 }
 
 type vfs struct {
-	db      *dynamodb.DynamoDB
-	table   string
-	ownerID string
+	db                   *dynamodb.DynamoDB
+	table                string
+	ownerID              string
+	defaultSchemaVersion int
 
 	sectorSize int64
 
@@ -78,7 +84,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 	}
 
 	meta := dynamo.FileMetaV1V2{
-		MetaVersion: 2,
+		MetaVersion: v.defaultSchemaVersion,
 		OrigName:    name,
 		SectorSize:  v.sectorSize,
 		CompressAlg: "zstd",
@@ -154,7 +160,10 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, err
 			}
 
-			f := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+			f, err := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+			if err != nil {
+				return nil, 0, err
+			}
 			return f, flags, nil
 		} else {
 			err = json.Unmarshal([]byte(*existing.Item[name].S), &meta)
@@ -162,7 +171,11 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, fmt.Errorf("decode file metadata err: %w", err)
 			}
 
-			f := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+			f, err := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+			if err != nil {
+				return nil, 0, err
+			}
+
 			return f, flags, nil
 		}
 	}
@@ -250,7 +263,10 @@ func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
 		return err
 	}
 
-	f := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+	f, err := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+	if err != nil {
+		return err
+	}
 
 	err = f.DeleteSectors()
 	if err != nil {
