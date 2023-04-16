@@ -32,8 +32,13 @@ type File struct {
 	lockManager lock.LockManager
 }
 
-func FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb.DynamoDB, changeLogWriter *json.Encoder) *File {
-	return &File{
+func FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb.DynamoDB, changeLogWriter *json.Encoder) (*File, error) {
+
+	if meta.MetaVersion > 1 {
+		return nil, fmt.Errorf("cannot instanciate schemav1 file for MetaVersion=%d", meta.MetaVersion)
+	}
+
+	f := &File{
 		dataRowKey:      dynamo.FileDataPrefix + meta.RandID + "-" + meta.OrigName,
 		rawName:         meta.OrigName,
 		randID:          meta.RandID,
@@ -44,6 +49,7 @@ func FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb
 
 		lockManager: lock.NewGlobalLockManger(db, table, meta.LockRowKey, ownerID),
 	}
+	return f, nil
 }
 
 func (f *File) Close() error {
@@ -379,7 +385,6 @@ func (f *File) sectorForPos(pos int64) int64 {
 }
 
 func (f *File) Sync(flag sqlite3vfs.SyncType) error {
-	// XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX ??
 	if f.changeLogWriter != nil {
 		r := changelog.Record{
 			TS:     time.Now(),
