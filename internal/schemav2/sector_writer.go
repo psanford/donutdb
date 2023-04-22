@@ -3,6 +3,7 @@ package schemav2
 import (
 	"crypto/sha512"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -37,11 +38,10 @@ func (w *SectorWriter) WriteSector(idx int, data []byte) error {
 	}
 
 	h := sha512.New512_256()
-	h.Write([]byte(fmt.Sprintf("%d-", idx)))
 	h.Write(data)
 	sum := h.Sum(nil)
 
-	id := fmt.Sprintf("%x", sum)
+	id := fmt.Sprintf("%d__%x", idx, sum)
 	s := &Sector{
 		Data: data,
 		ID:   id,
@@ -93,6 +93,9 @@ func (w *SectorWriter) Flush() error {
 	reqs := make([]*dynamodb.WriteRequest, 0, len(w.pendingWriteSectors)+len(w.pendingDeleteSectors))
 
 	for _, s := range w.pendingWriteSectors {
+		idParts := strings.Split(s.ID, "__")
+		w.F.sectcache.Put(idParts[1], s.Data)
+
 		compBytes := compressFunc(s.Data)
 
 		key := "file-v2-" + w.F.randID + "-" + w.F.rawName + "-" + s.ID

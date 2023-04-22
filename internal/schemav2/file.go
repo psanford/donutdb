@@ -14,6 +14,7 @@ import (
 	"github.com/psanford/donutdb/internal/changelog"
 	"github.com/psanford/donutdb/internal/dynamo"
 	"github.com/psanford/donutdb/internal/lock"
+	"github.com/psanford/donutdb/sectorcache"
 	"github.com/psanford/sqlite3vfs"
 )
 
@@ -27,15 +28,20 @@ type File struct {
 	changeLogWriter *json.Encoder
 	db              *dynamodb.DynamoDB
 	table           string
+	sectcache       sectorcache.CacheV2
 
 	cachedSize int64
 
 	lockManager lock.LockManager
 }
 
-func FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb.DynamoDB, changeLogWriter *json.Encoder) (*File, error) {
+func FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb.DynamoDB, changeLogWriter *json.Encoder, cache sectorcache.CacheV2) (*File, error) {
 	if meta.MetaVersion != 2 {
 		return nil, fmt.Errorf("cannot instanciate schemav2 file for MetaVersion=%d", meta.MetaVersion)
+	}
+
+	if cache == nil {
+		cache = &nopCache{}
 	}
 
 	f := File{
@@ -46,6 +52,7 @@ func FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb
 		table:           table,
 		db:              db,
 		changeLogWriter: changeLogWriter,
+		sectcache:       cache,
 
 		lockManager: lock.NewGlobalLockManger(db, table, meta.LockRowKey, ownerID),
 	}

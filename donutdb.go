@@ -15,6 +15,7 @@ import (
 	"github.com/psanford/donutdb/internal/dynamo"
 	"github.com/psanford/donutdb/internal/schemav1"
 	"github.com/psanford/donutdb/internal/schemav2"
+	"github.com/psanford/donutdb/sectorcache"
 	"github.com/psanford/sqlite3vfs"
 )
 
@@ -57,6 +58,7 @@ type vfs struct {
 	table                string
 	ownerID              string
 	defaultSchemaVersion int
+	sectorCache          sectorcache.CacheV2
 
 	sectorSize int64
 
@@ -163,7 +165,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, err
 			}
 
-			f, err := v.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+			f, err := v.FileFromMeta(&meta)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -174,7 +176,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, fmt.Errorf("decode file metadata err: %w", err)
 			}
 
-			f, err := v.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+			f, err := v.FileFromMeta(&meta)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -186,11 +188,11 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 	return nil, flags, errors.New("failed to get/create file metadata too many times due to races")
 }
 
-func (v *vfs) FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb.DynamoDB, changeLogWriter *json.Encoder) (sqlite3vfs.File, error) {
+func (v *vfs) FileFromMeta(meta *dynamo.FileMetaV1V2) (sqlite3vfs.File, error) {
 	if meta.MetaVersion == 0 || meta.MetaVersion == 1 {
 		return schemav1.FileFromMeta(meta, v.table, v.ownerID, v.db, v.changeLogWriter)
 	} else if meta.MetaVersion == 2 {
-		return schemav2.FileFromMeta(meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+		return schemav2.FileFromMeta(meta, v.table, v.ownerID, v.db, v.changeLogWriter, v.sectorCache)
 	}
 
 	return nil, errors.New("Invalid schema version")
@@ -277,7 +279,7 @@ func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
 		return err
 	}
 
-	f, err := v.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+	f, err := v.FileFromMeta(&meta)
 	if err != nil {
 		return err
 	}
