@@ -19,457 +19,466 @@ import (
 	"github.com/psanford/sqlite3vfs"
 )
 
+var schemaVersions = []int{1, 2}
+
 func TestDonutDB(t *testing.T) {
-	serverInfo, err := dynamotest.SetupDynamoServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, version := range schemaVersions {
+		serverInfo, err := dynamotest.SetupDynamoServer()
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	defer serverInfo.Cleanup()
+		defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(1))
+		vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(version))
 
-	err = sqlite3vfs.RegisterVFS("dynamodb", vfs)
-	if err != nil {
-		t.Fatal(err)
-	}
+		err = sqlite3vfs.RegisterVFS("dynamodb", vfs)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	dbName := fmt.Sprintf("donutdb-test-%d.db", time.Now().UnixNano())
-	db, err := sql.Open("sqlite3", dbName+"?vfs=dynamodb")
-	if err != nil {
-		t.Fatal(err)
-	}
+		dbName := fmt.Sprintf("donutdb-test-%d.db", time.Now().UnixNano())
+		db, err := sql.Open("sqlite3", dbName+"?vfs=dynamodb")
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS foo (
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS foo (
 id text NOT NULL PRIMARY KEY,
 title text
 )`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rows := []FooRow{
-		{
-			ID:    "415",
-			Title: "romantic-swell",
-		},
-		{
-			ID:    "610",
-			Title: "ironically-gnarl",
-		},
-		{
-			ID:    "768",
-			Title: "biophysicist-straddled",
-		},
-	}
-
-	for _, row := range rows {
-		_, err = db.Exec(`INSERT INTO foo (id, title) values (?, ?)`, row.ID, row.Title)
 		if err != nil {
 			t.Fatal(err)
 		}
-	}
 
-	rowIter, err := db.Query(`SELECT id, title from foo order by id`)
-	if err != nil {
-		t.Fatal(err)
-	}
+		rows := []FooRow{
+			{
+				ID:    "415",
+				Title: "romantic-swell",
+			},
+			{
+				ID:    "610",
+				Title: "ironically-gnarl",
+			},
+			{
+				ID:    "768",
+				Title: "biophysicist-straddled",
+			},
+		}
 
-	var gotRows []FooRow
+		for _, row := range rows {
+			_, err = db.Exec(`INSERT INTO foo (id, title) values (?, ?)`, row.ID, row.Title)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 
-	for rowIter.Next() {
-		var row FooRow
-		err = rowIter.Scan(&row.ID, &row.Title)
+		rowIter, err := db.Query(`SELECT id, title from foo order by id`)
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotRows = append(gotRows, row)
-	}
-	err = rowIter.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	if !cmp.Equal(rows, gotRows) {
-		t.Fatal(cmp.Diff(rows, gotRows))
-	}
+		var gotRows []FooRow
 
-	err = db.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// reopen db
-	db, err = sql.Open("sqlite3", dbName+"?vfs=dynamodb")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rowIter, err = db.Query(`SELECT id, title from foo order by id`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	gotRows = gotRows[:0]
-
-	for rowIter.Next() {
-		var row FooRow
-		err = rowIter.Scan(&row.ID, &row.Title)
+		for rowIter.Next() {
+			var row FooRow
+			err = rowIter.Scan(&row.ID, &row.Title)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotRows = append(gotRows, row)
+		}
+		err = rowIter.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotRows = append(gotRows, row)
-	}
-	err = rowIter.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	if !cmp.Equal(rows, gotRows) {
-		t.Fatal(cmp.Diff(rows, gotRows))
-	}
+		if !cmp.Equal(rows, gotRows) {
+			t.Fatal(cmp.Diff(rows, gotRows))
+		}
 
-	err = db.Close()
-	if err != nil {
-		t.Fatal(err)
+		err = db.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// reopen db
+		db, err = sql.Open("sqlite3", dbName+"?vfs=dynamodb")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rowIter, err = db.Query(`SELECT id, title from foo order by id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		gotRows = gotRows[:0]
+
+		for rowIter.Next() {
+			var row FooRow
+			err = rowIter.Scan(&row.ID, &row.Title)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotRows = append(gotRows, row)
+		}
+		err = rowIter.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !cmp.Equal(rows, gotRows) {
+			t.Fatal(cmp.Diff(rows, gotRows))
+		}
+
+		err = db.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
 func TestAccessDelete(t *testing.T) {
-	serverInfo, err := dynamotest.SetupDynamoServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, version := range schemaVersions {
+		serverInfo, err := dynamotest.SetupDynamoServer()
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	defer serverInfo.Cleanup()
+		defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(1))
+		vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(version))
 
-	fname := fmt.Sprintf("tearfully-coital-%d", time.Now().UnixNano())
+		fname := fmt.Sprintf("tearfully-coital-%d", time.Now().UnixNano())
 
-	exists, err := vfs.Access(fname, sqlite3vfs.AccessExists)
-	if err != nil {
-		t.Fatal(err)
-	}
+		exists, err := vfs.Access(fname, sqlite3vfs.AccessExists)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if exists {
-		t.Fatal("File exists prior to being written to")
-	}
+		if exists {
+			t.Fatal("File exists prior to being written to")
+		}
 
-	writable, err := vfs.Access(fname, sqlite3vfs.AccessReadWrite)
-	if err != nil {
-		t.Fatal(err)
-	}
+		writable, err := vfs.Access(fname, sqlite3vfs.AccessReadWrite)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if !writable {
-		t.Fatal("File path is not writable")
-	}
+		if !writable {
+			t.Fatal("File path is not writable")
+		}
 
-	f, _, err := vfs.Open(fname, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+		f, _, err := vfs.Open(fname, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	data := make([]byte, 3267)
-	rand.Read(data)
+		data := make([]byte, 3267)
+		rand.Read(data)
 
-	_, err = f.WriteAt(data, 3227)
-	if err != nil {
-		t.Fatal(err)
-	}
+		_, err = f.WriteAt(data, 3227)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	err = f.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
+		err = f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	exists, err = vfs.Access(fname, sqlite3vfs.AccessExists)
-	if err != nil {
-		t.Fatal(err)
-	}
+		exists, err = vfs.Access(fname, sqlite3vfs.AccessExists)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if !exists {
-		t.Fatal("File does not exist after writing to it")
-	}
+		if !exists {
+			t.Fatal("File does not exist after writing to it")
+		}
 
-	err = vfs.Delete(fname, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+		err = vfs.Delete(fname, true)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	exists, err = vfs.Access(fname, sqlite3vfs.AccessExists)
-	if err != nil {
-		t.Fatal(err)
-	}
+		exists, err = vfs.Access(fname, sqlite3vfs.AccessExists)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if exists {
-		t.Fatal("File still exists after deleting it")
+		if exists {
+			t.Fatal("File still exists after deleting it")
+		}
 	}
 }
 
 func TestReadWriteFile(t *testing.T) {
-	serverInfo, err := dynamotest.SetupDynamoServer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, version := range schemaVersions {
+		serverInfo, err := dynamotest.SetupDynamoServer()
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	defer serverInfo.Cleanup()
+		defer serverInfo.Cleanup()
 
-	vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(1))
+		vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(version))
 
-	fname := fmt.Sprintf("undervalues-reverend-%d", time.Now().UnixNano())
-	vfsF, _, err := vfs.Open(fname, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := newFsanity(vfsF)
-	defer f.Close()
+		fname := fmt.Sprintf("undervalues-reverend-%d", time.Now().UnixNano())
+		vfsF, _, err := vfs.Open(fname, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f := newFsanity(vfsF)
+		defer f.Close()
 
-	size, err := f.FileSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if size != 0 {
-		t.Fatalf("Expected new file to have size 0 but was %d", size)
-	}
+		size, err := f.FileSize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if size != 0 {
+			t.Fatalf("Expected new file to have size 0 but was %d", size)
+		}
 
-	data := []byte("rustic-grouped")
-	n, err := f.WriteAt(data, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != len(data) {
-		t.Fatalf("WriteAt n %d != len(data) %d", n, len(data))
-	}
+		data := []byte("rustic-grouped")
+		n, err := f.WriteAt(data, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != len(data) {
+			t.Fatalf("WriteAt n %d != len(data) %d", n, len(data))
+		}
 
-	size, err = f.FileSize()
-	if err != nil {
-		t.Fatal(err)
-	}
+		size, err = f.FileSize()
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if size != int64(len(data)) {
-		t.Fatalf("Filesize != len(data): %d vs %d", size, len(data))
-	}
+		if size != int64(len(data)) {
+			t.Fatalf("Filesize != len(data): %d vs %d", size, len(data))
+		}
 
-	got := make([]byte, 1024)
+		got := make([]byte, 1024)
 
-	n, err = f.ReadAt(got, 0)
-	if err != io.EOF {
-		t.Fatal(err)
-	}
-	got = got[:n]
+		n, err = f.ReadAt(got, 0)
+		if err != io.EOF {
+			t.Fatal(err)
+		}
+		got = got[:n]
 
-	if !cmp.Equal(data, got) {
-		t.Fatal(cmp.Diff(data, got))
-	}
+		if !cmp.Equal(data, got) {
+			t.Fatal(cmp.Diff(data, got))
+		}
 
-	// read the exact correct size
-	n, err = f.ReadAt(got, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+		// read the exact correct size
+		n, err = f.ReadAt(got, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if !cmp.Equal(data, got) {
-		t.Fatal(cmp.Diff(data, got))
-	}
+		if !cmp.Equal(data, got) {
+			t.Fatal(cmp.Diff(data, got))
+		}
 
-	// read less than total data
-	got = got[:n-1]
-	n, err = f.ReadAt(got, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+		// read less than total data
+		got = got[:n-1]
+		n, err = f.ReadAt(got, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if !cmp.Equal(data[:len(data)-1], got) {
-		t.Fatal(cmp.Diff(data, got))
-	}
+		if !cmp.Equal(data[:len(data)-1], got) {
+			t.Fatal(cmp.Diff(data, got))
+		}
 
-	fname2 := "vomiting-wraith"
-	vfsf2, _, err := vfs.Open(fname2, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f2 := newFsanity(vfsf2)
+		fname2 := "vomiting-wraith"
+		vfsf2, _, err := vfs.Open(fname2, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f2 := newFsanity(vfsf2)
 
-	defer f2.Close()
+		defer f2.Close()
 
-	n, err = f2.WriteAt(data, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != len(data) {
-		t.Fatalf("WriteAt n %d != len(data) %d", n, len(data))
-	}
+		n, err = f2.WriteAt(data, 32)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != len(data) {
+			t.Fatalf("WriteAt n %d != len(data) %d", n, len(data))
+		}
 
-	size, err = f2.FileSize()
-	if err != nil {
-		t.Fatal(err)
-	}
+		size, err = f2.FileSize()
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if size != int64(32+len(data)) {
-		t.Fatalf("Filesize != 32+len(data): %d vs %d", size, 32+len(data))
-	}
+		if size != int64(32+len(data)) {
+			t.Fatalf("Filesize != 32+len(data): %d vs %d", size, 32+len(data))
+		}
 
-	got = make([]byte, 1024)
+		got = make([]byte, 1024)
 
-	n, err = f2.ReadAt(got, 0)
-	if err != nil && err != io.EOF {
-		t.Fatal(err)
-	}
-	got = got[:n]
+		n, err = f2.ReadAt(got, 0)
+		if err != nil && err != io.EOF {
+			t.Fatal(err)
+		}
+		got = got[:n]
 
-	expect := make([]byte, 32)
-	expect = append(expect, data...)
-	if !cmp.Equal(expect, got) {
-		t.Fatal(cmp.Diff(expect, got))
-	}
+		expect := make([]byte, 32)
+		expect = append(expect, data...)
+		if !cmp.Equal(expect, got) {
+			t.Fatal(cmp.Diff(expect, got))
+		}
 
-	data = make([]byte, 1549516)
-	rand.Read(data)
-	_, err = f.WriteAt(data, 305204)
-	if err != nil {
-		t.Fatal(err)
-	}
+		data = make([]byte, 1549516)
+		rand.Read(data)
+		_, err = f.WriteAt(data, 305204)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	_, err = f.FileSize()
-	if err != nil {
-		t.Fatal(err)
-	}
+		_, err = f.FileSize()
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	_, err = f.ReadAt(data, 305204)
-	if err != nil {
-		t.Fatal(err)
-	}
+		_, err = f.ReadAt(data, 305204)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	size, err = f.FileSize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = f.Truncate(305204 + 3679)
-	if err != nil {
-		t.Fatal(err)
+		size, err = f.FileSize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = f.Truncate(305204 + 3679)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
 func TestReadWriteCases(t *testing.T) {
-	serverInfo, err := dynamotest.SetupDynamoServer()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	defer serverInfo.Cleanup()
-
-	vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(1))
-
-	// these are test cases triggered by simple fuzzing
-	// try to convert into a minimal test case when possible
-	checks := []writeReadCheck{
-		{
-			writes: []sizeOff{
-				{
-					size:   1549516,
-					offset: 305204,
-				},
-			},
-		},
-		{
-			writes: []sizeOff{
-				{
-					size:   148715,
-					offset: 3071696,
-				},
-			},
-		},
-		{
-			writes: []sizeOff{
-				// do a small write,
-				// trigger a grow
-				// write on a sector size boundry
-				{
-					offset: 0,
-					size:   1,
-				},
-				{
-					offset: dynamo.DefaultSectorSize,
-					size:   10,
-				},
-			},
-		},
-		{
-			writes: []sizeOff{
-				// do a small write,
-				// trigger a grow
-				// write on a sector size boundry
-				{
-					offset: 0,
-					size:   1,
-				},
-				{
-					offset: dynamo.DefaultSectorSize * 2,
-					size:   dynamo.DefaultSectorSize,
-				},
-			},
-		},
-		{
-			writes: []sizeOff{
-				{
-					offset: 0,
-					size:   1,
-				},
-				{
-					offset: 57574,
-					size:   10208,
-				},
-			},
-		},
-	}
-
-	for i, check := range checks {
-		fname := fmt.Sprintf("cashew-discontinuous-%d", i)
-		vfsF, _, err := vfs.Open(fname, 0)
+	for _, version := range schemaVersions {
+		serverInfo, err := dynamotest.SetupDynamoServer()
 		if err != nil {
-			t.Fatalf("check: %d, open file err=%s", i, err)
-		}
-		f := newFsanity(vfsF)
-
-		rand.Seed(check.seed)
-
-		for _, pos := range check.writes {
-			data := make([]byte, pos.size)
-			rand.Read(data)
-			_, err = f.WriteAt(data, pos.offset)
-			if err != nil {
-				t.Fatalf("check: %d: writeAt err: %s", i, err)
-			}
-
-			got := make([]byte, pos.size)
-			_, err = f.ReadAt(got, pos.offset)
-			if err != nil {
-				t.Fatalf("check: %d, readAt err: %s", i, err)
-			}
-
-			if !bytes.Equal(data, got) {
-				t.Fatalf("check: %d, sanity check written data != read data", i)
-			}
-
-			size, err := f.FileSize()
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			// sanity check against local fs copy via readWriteSanity
-			fullData := make([]byte, size)
-			_, err = f.ReadAt(fullData, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
+			t.Fatal(err)
 		}
 
-		f.Close()
+		defer serverInfo.Cleanup()
+		vfs := New(serverInfo.DB, serverInfo.TableName, WithDefaultSchemaVersion(version))
+
+		// these are test cases triggered by simple fuzzing
+		// try to convert into a minimal test case when possible
+		checks := []writeReadCheck{
+			{
+				writes: []sizeOff{
+					{
+						size:   1549516,
+						offset: 305204,
+					},
+				},
+			},
+			{
+				writes: []sizeOff{
+					{
+						size:   148715,
+						offset: 3071696,
+					},
+				},
+			},
+			{
+				writes: []sizeOff{
+					// do a small write,
+					// trigger a grow
+					// write on a sector size boundry
+					{
+						offset: 0,
+						size:   1,
+					},
+					{
+						offset: dynamo.DefaultSectorSize,
+						size:   10,
+					},
+				},
+			},
+			{
+				writes: []sizeOff{
+					// do a small write,
+					// trigger a grow
+					// write on a sector size boundry
+					{
+						offset: 0,
+						size:   1,
+					},
+					{
+						offset: dynamo.DefaultSectorSize * 2,
+						size:   dynamo.DefaultSectorSize,
+					},
+				},
+			},
+			{
+				writes: []sizeOff{
+					{
+						offset: 0,
+						size:   1,
+					},
+					{
+						offset: 57574,
+						size:   10208,
+					},
+				},
+			},
+		}
+
+		for i, check := range checks {
+			fname := fmt.Sprintf("cashew-discontinuous-%d", i)
+			vfsF, _, err := vfs.Open(fname, 0)
+			if err != nil {
+				t.Fatalf("check: %d, open file err=%s", i, err)
+			}
+			f := newFsanity(vfsF)
+
+			rand.Seed(check.seed)
+
+			for _, pos := range check.writes {
+				data := make([]byte, pos.size)
+				rand.Read(data)
+				_, err = f.WriteAt(data, pos.offset)
+				if err != nil {
+					t.Fatalf("check: %d: writeAt err: %s", i, err)
+				}
+
+				got := make([]byte, pos.size)
+				_, err = f.ReadAt(got, pos.offset)
+				if err != nil {
+					t.Fatalf("check: %d, readAt err: %s", i, err)
+				}
+
+				if !bytes.Equal(data, got) {
+					t.Fatalf("check: %d, sanity check written data != read data", i)
+				}
+
+				size, err := f.FileSize()
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				// sanity check against local fs copy via readWriteSanity
+				fullData := make([]byte, size)
+				_, err = f.ReadAt(fullData, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			f.Close()
+		}
 	}
 }
 
-func TestErrorOnBadSector(t *testing.T) {
+func TestErrorOnBadSectorSchemaV1(t *testing.T) {
 	serverInfo, err := dynamotest.SetupDynamoServer()
 	if err != nil {
 		t.Fatal(err)

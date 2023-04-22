@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/psanford/donutdb/internal/dynamo"
 	"github.com/psanford/donutdb/internal/schemav1"
+	"github.com/psanford/donutdb/internal/schemav2"
 	"github.com/psanford/sqlite3vfs"
 )
 
@@ -122,7 +123,9 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 			}
 
 			meta.RandID = base64.URLEncoding.EncodeToString(fileIDBytes)
-			meta.DataRowKey = dynamo.FileDataPrefix + meta.RandID + "-" + name
+			if v.defaultSchemaVersion < 2 {
+				meta.DataRowKey = dynamo.FileDataPrefix + meta.RandID + "-" + name
+			}
 			meta.LockRowKey = dynamo.FileLockPrefix + meta.RandID + "-" + name
 
 			metaBytes, err := json.Marshal(meta)
@@ -160,7 +163,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, err
 			}
 
-			f, err := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+			f, err := v.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -171,7 +174,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, fmt.Errorf("decode file metadata err: %w", err)
 			}
 
-			f, err := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+			f, err := v.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -181,6 +184,17 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 	}
 
 	return nil, flags, errors.New("failed to get/create file metadata too many times due to races")
+}
+
+func (v *vfs) FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb.DynamoDB, changeLogWriter *json.Encoder) (sqlite3vfs.File, error) {
+	if meta.MetaVersion == 0 || meta.MetaVersion == 1 {
+		return schemav1.FileFromMeta(meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+	} else if meta.MetaVersion == 2 {
+		return schemav2.FileFromMeta(meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+	}
+
+	return nil, errors.New("Invalid schema version")
+
 }
 
 func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
@@ -263,12 +277,16 @@ func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
 		return err
 	}
 
-	f, err := schemav1.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
+	f, err := v.FileFromMeta(&meta, v.table, v.ownerID, v.db, v.changeLogWriter)
 	if err != nil {
 		return err
 	}
 
-	err = f.DeleteSectors()
+	ff := f.(interface {
+		CleanupSectors(*dynamo.FileMetaV1V2) error
+	})
+
+	err = ff.CleanupSectors(&meta)
 	if err != nil {
 		return err
 	}
