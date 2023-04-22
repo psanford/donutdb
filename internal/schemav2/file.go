@@ -1,4 +1,4 @@
-package schemav1
+package schemav2
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/psanford/donutdb/internal/changelog"
 	"github.com/psanford/donutdb/internal/dynamo"
@@ -33,12 +34,11 @@ type File struct {
 }
 
 func FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb.DynamoDB, changeLogWriter *json.Encoder) (*File, error) {
-
-	if meta.MetaVersion > 1 {
-		return nil, fmt.Errorf("cannot instanciate schemav1 file for MetaVersion=%d", meta.MetaVersion)
+	if meta.MetaVersion != 2 {
+		return nil, fmt.Errorf("cannot instanciate schemav2 file for MetaVersion=%d", meta.MetaVersion)
 	}
 
-	f := &File{
+	f := File{
 		dataRowKey:      dynamo.FileDataPrefix + meta.RandID + "-" + meta.OrigName,
 		rawName:         meta.OrigName,
 		randID:          meta.RandID,
@@ -49,7 +49,8 @@ func FileFromMeta(meta *dynamo.FileMetaV1V2, table, ownerID string, db *dynamodb
 
 		lockManager: lock.NewGlobalLockManger(db, table, meta.LockRowKey, ownerID),
 	}
-	return f, nil
+
+	return &f, nil
 }
 
 func (f *File) Close() error {
@@ -89,19 +90,28 @@ func (f *File) ReadAt(p []byte, off int64) (retN int, retErr error) {
 		return 0, os.ErrClosed
 	}
 
-	firstSector := f.sectorForPos(off)
+	firstSectorIdx := f.sectorIdxForPos(off)
 
-	fileSize, err := f.FileSize()
+	meta, err := f.currentMeta()
 	if err != nil {
 		return 0, err
 	}
-
 	lastByte := off + int64(len(p)) - 1
 
-	lastSector := f.sectorForPos(lastByte)
+	lastSectorIdx := f.sectorIdxForPos(lastByte) + 1
+
+	if firstSectorIdx >= len(meta.Sectors) {
+		return 0, io.EOF
+	}
+
+	if lastSectorIdx > len(meta.Sectors) {
+		lastSectorIdx = len(meta.Sectors)
+	}
+
+	sectors := meta.Sectors[firstSectorIdx:lastSectorIdx]
 
 	var sect Sector
-	iter := f.newSectorIterator(&sect, firstSector, lastSector, f.sectorSize)
+	iter := f.newSectorIterator(&sect, sectors)
 
 	var (
 		n         int
@@ -121,13 +131,14 @@ func (f *File) ReadAt(p []byte, off int64) (retN int, retErr error) {
 		iterCount++
 	}
 	err = iter.Close()
-	if err == dynamo.SectorNotFoundErr && lastByte >= fileSize {
+	if err == dynamo.SectorNotFoundErr && lastByte >= meta.FileSize {
 		return n, io.EOF
 	} else if err != nil {
-		return n, err
+		retErr = err
+		return n, retErr
 	}
 
-	if lastByte >= fileSize {
+	if lastByte >= meta.FileSize {
 		return n, io.EOF
 	}
 
@@ -164,14 +175,14 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 
 	var writeCount int
 
-	oldFileSize, err := f.FileSize()
+	meta, err := f.currentMeta()
 	if err != nil {
-		return writeCount, fmt.Errorf("filesize err: %w", err)
+		return 0, err
 	}
 
-	firstSector := f.sectorForPos(off)
+	oldFileSize := meta.FileSize
 
-	oldLastSector := f.sectorForPos(oldFileSize)
+	firstSectorIdx := f.sectorIdxForPos(off)
 
 	defer func() {
 		if off+int64(len(b)) > oldFileSize {
@@ -180,109 +191,90 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 	}()
 
 	secWriter := &SectorWriter{
-		F: f,
+		F:    f,
+		meta: meta,
 	}
 
-	lastSectorOffset := (off + int64(len(b))) - ((off + int64(len(b))) % f.sectorSize)
-
-	// if we're writing after the end of the file, we need to fill any intermediary
-	// sectors with zeros.
-	for sectorStart := oldLastSector; sectorStart < lastSectorOffset; sectorStart += f.sectorSize {
-		sectorLastBytePossible := sectorStart + f.sectorSize - 1
-		if oldFileSize <= sectorStart {
+	if firstSectorIdx >= len(meta.Sectors) {
+		for idx := len(meta.Sectors); idx < firstSectorIdx; idx++ {
 			// create sector as empty
-			err = secWriter.WriteSector(&Sector{
-				Offset: sectorStart,
-				Data:   make([]byte, f.sectorSize),
-			})
+			data := make([]byte, f.sectorSize)
+			err = secWriter.WriteSector(idx, data)
 			if err != nil {
-				return writeCount, fmt.Errorf("fill sector (off=%d) err: %w", sectorStart, err)
+				return writeCount, fmt.Errorf("fill sector (off=%d) err: %w", int64(idx)*f.sectorSize, err)
 			}
-		} else if oldFileSize < int64(sectorLastBytePossible) {
-			// fill existing sector
-			sect, err := f.getSector(sectorStart)
-			if err != nil {
-				return 0, err
-			}
-			fill := make([]byte, f.sectorSize-int64(len(sect.Data)))
-			sect.Data = append(sect.Data, fill...)
-			err = secWriter.WriteSector(sect)
-			if err != nil {
-				return 0, err
-			}
-		} else {
-			// this is a full sector, don't do anything
 		}
-	}
 
-	err = secWriter.Flush()
-	if err != nil {
-		return 0, err
-	}
-
-	var sect Sector
-	iter := f.newSectorIterator(&sect, firstSector, lastSectorOffset, f.sectorSize)
-
-	var (
-		idx      int
-		iterDone bool
-	)
-	for sec := firstSector; sec <= lastSectorOffset; sec += f.sectorSize {
-		if iterDone {
-			sect = Sector{
-				Offset: sec,
-				Data:   make([]byte, 0),
+		if meta.FileSize%f.sectorSize != 0 {
+			// the last sector is not full, we need to fetch it and append to it
+			idx := len(secWriter.meta.Sectors) - 1
+			lastSectorID := secWriter.meta.Sectors[idx]
+			sectors, err := f.getSectors([]string{lastSectorID})
+			if err != nil {
+				return writeCount, err
 			}
 
-		} else {
-			if !iter.Next() {
-				iterDone = true
-				err := iter.Close()
-				if err == dynamo.SectorNotFoundErr {
-					if sec != lastSectorOffset {
+			sector := sectors[0]
 
-						return writeCount, fmt.Errorf("get sector err: %w", err)
-					}
-				} else if err != nil {
+			additionalCount := int(f.sectorSize) - len(sector.Data)
+			if additionalCount > 0 {
+				sector.Data = append(sector.Data, make([]byte, additionalCount)...)
+				secWriter.WriteSector(idx, sector.Data)
+			}
+		}
+
+	}
+
+	curSectorData := make([]byte, f.sectorSize)
+	posInFile := off
+
+	for len(b) > 0 {
+		dataForSector := int(f.sectorSize)
+		if posInFile%f.sectorSize != 0 {
+			dataForSector = int(f.sectorSize - (posInFile % f.sectorSize))
+		}
+		if len(b) < dataForSector {
+			dataForSector = len(b)
+		}
+
+		curSectorData = b[:dataForSector]
+		b = b[dataForSector:]
+
+		offsetIntoSector := int(posInFile % f.sectorSize)
+
+		curSectorIdx := f.sectorIdxForPos(posInFile)
+
+		if len(curSectorData) != int(f.sectorSize) {
+			// this is a partial sector, we need to fetch the existing sector data
+			// to merge with the new data
+			if pendingSector, found := secWriter.pendingWriteSectors[curSectorIdx]; found {
+				existingData := pendingSector.Data
+				copy(existingData[offsetIntoSector:], curSectorData)
+				secWriter.WriteSector(curSectorIdx, existingData)
+			} else if curSectorIdx >= len(secWriter.meta.Sectors) {
+				// this is a new sector
+				existingData := make([]byte, offsetIntoSector+len(curSectorData))
+				copy(existingData[offsetIntoSector:], curSectorData)
+				secWriter.WriteSector(curSectorIdx, existingData)
+			} else {
+				sector, err := f.getSectors([]string{secWriter.meta.Sectors[curSectorIdx]})
+				if err != nil {
 					return writeCount, fmt.Errorf("get sector err: %w", err)
 				}
-				sect = Sector{
-					Offset: sec,
-					Data:   make([]byte, 0),
+				existingData := sector[0].Data
+				if len(existingData) < offsetIntoSector+len(curSectorData) {
+					existingData = append(existingData, make([]byte, offsetIntoSector+len(curSectorData)-len(existingData))...)
 				}
+				copy(existingData[offsetIntoSector:], curSectorData)
+				secWriter.WriteSector(curSectorIdx, existingData)
 			}
+		} else {
+			secWriter.WriteSector(curSectorIdx, curSectorData)
 		}
 
-		var offsetIntoSector int64
-		if idx == 0 {
-			offsetIntoSector = off % f.sectorSize
-		}
-
-		if sect.Offset < lastSectorOffset && int64(len(sect.Data)) < f.sectorSize {
-			fill := make([]byte, f.sectorSize-int64(len(sect.Data)))
-			sect.Data = append(sect.Data, fill...)
-		} else if sect.Offset == lastSectorOffset && len(sect.Data) < int(offsetIntoSector)+len(b) {
-			fill := make([]byte, int(offsetIntoSector)+len(b)-len(sect.Data))
-			sect.Data = append(sect.Data, fill...)
-		}
-
-		n := copy(sect.Data[offsetIntoSector:], b)
-		b = b[n:]
-
-		sectCopy := sect
-		err = secWriter.WriteSector(&sectCopy)
-		if err != nil {
-			return writeCount, fmt.Errorf("write sector err: %w", err)
-		}
-		writeCount += n
-		idx++
-	}
-
-	if !iterDone {
-		err = iter.Close()
-		if err != nil {
-			return writeCount, fmt.Errorf("get sector err: %w", err)
-		}
+		writeCount += dataForSector
+		posInFile += int64(dataForSector)
+		curSectorIdx++
 	}
 
 	err = secWriter.Flush()
@@ -294,33 +286,26 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 }
 
 func (f *File) SanityCheckSectors() error {
-	fileSize, err := f.FileSize()
+	meta, err := f.currentMeta()
 	if err != nil {
 		return err
 	}
 
-	lastSector := f.sectorForPos(fileSize)
 	var sect Sector
-	iter := f.newSectorIterator(&sect, 0, lastSector, f.sectorSize)
+	iter := f.newSectorIterator(&sect, meta.Sectors)
 
-	var n int64
+	var seen int64
 	for iter.Next() {
-		expectOffset := n * f.sectorSize
-		if sect.Offset != int64(expectOffset) {
-			iter.Close()
-			return fmt.Errorf("sector %d gotOffset=%d expectedOffset=%d", n, sect.Offset, expectOffset)
-		}
-		n++
+		seen = seen + int64(len(sect.Data))
 	}
+
 	err = iter.Close()
 	if err != nil {
 		return err
 	}
 
-	n--
-
-	if n*f.sectorSize != lastSector {
-		return fmt.Errorf("did not reach final sector: last seen n=%d offset=%d expected=%d", n, n*f.sectorSize, lastSector)
+	if seen != meta.FileSize {
+		return fmt.Errorf("file size mismatch: %d != %d", seen, meta.FileSize)
 	}
 
 	return nil
@@ -346,42 +331,54 @@ func (f *File) Truncate(size int64) (retErr error) {
 		}()
 	}
 
-	fileSize, err := f.FileSize()
+	meta, err := f.currentMeta()
 	if err != nil {
 		return err
 	}
 
-	if size >= fileSize {
+	if size >= meta.FileSize {
 		return nil
 	}
 
-	firstSector := f.sectorForPos(size)
+	secWriter := &SectorWriter{
+		F:    f,
+		meta: meta,
+	}
+	firstSectorIdx := f.sectorIdxForPos(size)
 
-	sect, err := f.getSector(firstSector)
+	firstSectorIdxToDelete := firstSectorIdx
+
+	if size%f.sectorSize != 0 {
+		firstSectorIdxToDelete++
+		sectors, err := f.getSectors([]string{meta.Sectors[firstSectorIdx]})
+		if err != nil {
+			return err
+		}
+
+		sectors[0].Data = sectors[0].Data[:size%f.sectorSize]
+
+		secWriter.WriteSector(firstSectorIdx, sectors[0].Data)
+	}
+
+	lastSectorIdx := len(meta.Sectors) - 1
+
+	for sectToDelete := firstSectorIdxToDelete; sectToDelete <= lastSectorIdx; sectToDelete++ {
+		secWriter.DeleteSector(meta.Sectors[sectToDelete])
+	}
+
+	err = secWriter.Flush()
 	if err != nil {
 		return err
 	}
 
-	sect.Data = sect.Data[:size%f.sectorSize]
-
-	secWriter := &SectorWriter{
-		F: f,
-	}
-
-	secWriter.WriteSector(sect)
-
-	lastSector := f.sectorForPos(fileSize)
-
-	startSector := firstSector + f.sectorSize
-	for sectToDelete := startSector; sectToDelete <= lastSector; sectToDelete += f.sectorSize {
-		secWriter.DeleteSector(sectToDelete)
-	}
-
-	return secWriter.Flush()
+	meta.FileSize = size
+	return f.updateMeta(meta)
 }
 
-func (f *File) sectorForPos(pos int64) int64 {
-	return pos - (pos % f.sectorSize)
+// sectorForPos returns the array index into the metadata
+// sectors slice
+func (f *File) sectorIdxForPos(pos int64) int {
+	return int(pos / f.sectorSize)
 }
 
 func (f *File) Sync(flag sqlite3vfs.SyncType) error {
@@ -405,6 +402,37 @@ func (f *File) Sync(flag sqlite3vfs.SyncType) error {
 	return nil
 }
 
+func (f *File) currentMeta() (*dynamo.FileMetaV1V2, error) {
+	existing, err := f.db.GetItem(&dynamodb.GetItemInput{
+		TableName:            &f.table,
+		ConsistentRead:       aws.Bool(true),
+		ProjectionExpression: aws.String("#fname"),
+		ExpressionAttributeNames: map[string]*string{
+			"#fname": aws.String(f.rawName),
+		},
+		Key: map[string]*dynamodb.AttributeValue{
+			dynamo.HKey: {
+				S: aws.String(dynamo.FileMetaKey),
+			},
+			dynamo.RKey: {
+				N: aws.String("0"),
+			},
+		},
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	var meta dynamo.FileMetaV1V2
+	err = json.Unmarshal([]byte(*existing.Item[f.rawName].S), &meta)
+	if err != nil {
+		return nil, fmt.Errorf("decode file metadata err: %w", err)
+	}
+
+	return &meta, nil
+}
+
 func (f *File) FileSize() (retSize int64, retErr error) {
 	if f.changeLogWriter != nil {
 		r := changelog.Record{
@@ -425,14 +453,12 @@ func (f *File) FileSize() (retSize int64, retErr error) {
 		}()
 	}
 
-	sector, err := f.getLastSector()
-	if err == dynamo.SectorNotFoundErr {
-		return 0, nil
-	} else if err != nil {
+	meta, err := f.currentMeta()
+	if err != nil {
 		return 0, err
 	}
 
-	size := sector.Offset + int64(len(sector.Data))
+	size := meta.FileSize
 
 	if size > f.cachedSize {
 		f.cachedSize = size
@@ -569,24 +595,46 @@ func (f *File) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
 	return c
 }
 
+func (f *File) updateMeta(meta *dynamo.FileMetaV1V2) error {
+	metaBytes, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+
+	_, err = f.db.UpdateItem(&dynamodb.UpdateItemInput{
+		TableName:        &f.table,
+		UpdateExpression: aws.String("SET #fname=:meta"),
+		Key: map[string]*dynamodb.AttributeValue{
+			dynamo.HKey: {
+				S: aws.String(dynamo.FileMetaKey),
+			},
+			dynamo.RKey: {
+				N: aws.String("0"),
+			},
+		},
+		ExpressionAttributeNames: map[string]*string{
+			"#fname": &meta.OrigName,
+		},
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":meta": {
+				S: aws.String(string(metaBytes)),
+			},
+		},
+	})
+
+	return err
+}
+
 func (f *File) CleanupSectors(meta *dynamo.FileMetaV1V2) error {
-	lastSec, err := f.getLastSector()
-	if err != nil {
-		return err
-	}
-
 	secWriter := &SectorWriter{
-		F: f,
+		F:                   f,
+		meta:                meta,
+		skipMetadataUpdates: true,
 	}
 
-	for sectToDelete := lastSec.Offset; sectToDelete >= 0; sectToDelete -= f.sectorSize {
-		secWriter.DeleteSector(sectToDelete)
+	for _, sect := range meta.Sectors {
+		secWriter.DeleteSector(sect)
 	}
 
-	err = secWriter.Flush()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return secWriter.Flush()
 }
