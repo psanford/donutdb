@@ -20,6 +20,20 @@ func (f *File) getSectors(sectorIDs []string) ([]Sector, error) {
 
 	keys := make([]map[string]*dynamodb.AttributeValue, 0, len(sectorIDs))
 	for _, sectorID := range sectorIDs {
+
+		parts := strings.Split(sectorID, "__")
+		hash := parts[1]
+
+		cachedData := f.sectcache.Get(hash)
+		if cachedData != nil {
+			sector := Sector{
+				Data:  cachedData,
+				Valid: true,
+			}
+			sectors[sectorID] = sector
+			continue
+		}
+
 		key := "file-v2-" + f.randID + "-" + f.rawName + "-" + sectorID
 		keys = append(keys, map[string]*dynamodb.AttributeValue{
 			dynamo.HKey: {
@@ -75,6 +89,10 @@ func (f *File) getSectors(sectorIDs []string) ([]Sector, error) {
 				Valid: true,
 			}
 			sectors[sectorID] = sector
+
+			idParts := strings.Split(sectorID, "__")
+			hash := idParts[1]
+			f.sectcache.Put(hash, sectorData)
 		}
 		if len(out.UnprocessedKeys) > 0 {
 			keys = append(keys, out.UnprocessedKeys[f.table].Keys...)

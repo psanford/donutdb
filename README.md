@@ -207,6 +207,7 @@ Dynamo Table:
 
 Data Types stored in the dynamo table:
 
+V1 schame:
 - File metadata
 This contains a mapping of filename to metadata. Each file gets a random\_id
 that is part of the hash\_key for the file data and lock row. The random\_id
@@ -225,6 +226,45 @@ sector boundary. If a sector exists, all previous sectors must also
 exist in the table. The bytes for a sector are stored in the attribute
 named "bytes". That attribute must have exactly 4k bytes, unless it is
 the final sector. The final sector should stop where the file stops.
+
+- Lock data
+This is where looks are stored for coordination. The current implementation
+uses a single global lock, similar to the sqlite `flock` and `dot-lock`
+implementations. The primary key for the global lock is
+`lock-global-v1-${rand_id}-${filename}` with a sort key of `0`.
+
+It should be possible to implement multi-reader single writer locks on
+top of dynamodb in the future.
+
+
+v2 schema:
+
+In V2 we move sectors into their own individual partitions. This allows
+us to cache unchanged sectors easily.
+
+- File metadata
+This contains a mapping of filename to metadata. Each file gets a random\_id
+that is part of the hash\_key for the file data and lock row. The random\_id
+allows for deleting a file atomically by simply removing the metadata record.
+The metadata also includes the sector size used for the file. This allows for
+changing the sector size default in the future without breaking existing file
+records. File metadata is stored in a single row with a hash\_key of
+`file-meta-v1` and a range\_key of `0`. The filename is the attribute name
+and the metadata is stored as JSON in the attribute value.
+In V2 the metadata also includes the full list of sectors and their ids.
+
+
+- File data
+This is where the bytes for each file is stored. The primary key for a
+file will be `file-v2-${rand_id}-${filename}-${sector_id}`.
+The sector\_id is `${sector\_idx}\_\_${sector\_hash}`. We include
+the idx to make it easier for deciding when its safe to delete
+unused sectors. The hash allows us to optionally cache sectors.
+
+If a sector exists, all previous sectors must also exist in the table.
+The bytes for a sector are stored in the attribute named "bytes". That
+attribute must have exactly 4k bytes, unless it is the final sector.
+The final sector should stop where the file stops.
 
 - Lock data
 This is where looks are stored for coordination. The current implementation

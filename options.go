@@ -3,6 +3,8 @@ package donutdb
 import (
 	"errors"
 	"io"
+
+	"github.com/psanford/donutdb/sectorcache"
 )
 
 type Option interface {
@@ -13,6 +15,7 @@ type options struct {
 	sectorSize           int64
 	changeLogWriter      io.Writer
 	defaultSchemaVersion int
+	sectorCache          sectorcache.CacheV2
 }
 
 type sectorSizeOption struct {
@@ -60,5 +63,22 @@ func (o defaultSchemaVersionOption) setOption(opts *options) error {
 func WithDefaultSchemaVersion(v int) Option {
 	return &defaultSchemaVersionOption{
 		version: v,
+	}
+}
+
+type sectorCacheOption struct {
+	sectorCache sectorcache.CacheV2
+}
+
+func (o sectorCacheOption) setOption(opts *options) error {
+	opts.sectorCache = o.sectorCache
+	return nil
+}
+
+// WithSectorCacheV2 sets an optional cache strategy for
+// schemav2 files.
+func WithSectorCacheV2(c sectorcache.CacheV2) Option {
+	return &sectorCacheOption{
+		sectorCache: c,
 	}
 }
