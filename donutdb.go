@@ -39,6 +39,7 @@ func New(dynamoClient *dynamodb.DynamoDB, table string, opts ...Option) sqlite3v
 		table:                table,
 		ownerID:              hex.EncodeToString(ownerIDBytes),
 		sectorSize:           options.sectorSize,
+		sectorCache:          options.sectorCache,
 		defaultSchemaVersion: 2,
 	}
 
@@ -288,10 +289,7 @@ func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
 		CleanupSectors(*dynamo.FileMetaV1V2) error
 	})
 
-	err = ff.CleanupSectors(&meta)
-	if err != nil {
-		return err
-	}
+	go ff.CleanupSectors(&meta)
 	return nil
 }
 
