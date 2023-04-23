@@ -3,7 +3,7 @@ package schemav2
 import (
 	"crypto/sha512"
 	"fmt"
-	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -32,6 +32,10 @@ var compressFunc = func(data []byte) []byte {
 	return encoder.EncodeAll(data, compBytes)
 }
 
+// var compressFunc = func(data []byte) []byte {
+// 	return data
+// }
+
 func (w *SectorWriter) WriteSector(idx int, data []byte) error {
 	if w.err != nil {
 		return w.err
@@ -59,6 +63,16 @@ func (w *SectorWriter) WriteSector(idx int, data []byte) error {
 	}
 
 	w.pendingWriteSectors[idx] = *s
+
+	endPos := (int64(idx) * w.F.sectorSize) + int64(len(data))
+	if endPos > w.meta.FileSize {
+		w.meta.FileSize = endPos
+	}
+
+	if len(w.meta.Sectors) <= idx {
+		w.meta.Sectors = append(w.meta.Sectors, make([]string, idx-len(w.meta.Sectors)+1)...)
+	}
+	w.meta.Sectors[idx] = s.ID
 
 	if len(w.pendingWriteSectors)+len(w.pendingDeleteSectors) == 25 {
 		return w.Flush()
@@ -89,12 +103,10 @@ func (w *SectorWriter) Flush() error {
 	if len(w.pendingWriteSectors)+len(w.pendingDeleteSectors) == 0 {
 		return nil
 	}
-
 	reqs := make([]*dynamodb.WriteRequest, 0, len(w.pendingWriteSectors)+len(w.pendingDeleteSectors))
 
 	for _, s := range w.pendingWriteSectors {
-		idParts := strings.Split(s.ID, "__")
-		w.F.sectcache.Put(idParts[1], s.Data)
+		w.F.sectcache.Put(s.ID, s.Data)
 
 		compBytes := compressFunc(s.Data)
 
@@ -116,15 +128,6 @@ func (w *SectorWriter) Flush() error {
 			},
 		}
 		reqs = append(reqs, req)
-
-		if len(w.meta.Sectors) <= s.idx {
-			w.meta.Sectors = append(w.meta.Sectors, make([]string, s.idx-len(w.meta.Sectors)+1)...)
-		}
-		w.meta.Sectors[s.idx] = s.ID
-		endPos := (int64(s.idx) * w.F.sectorSize) + int64(len(s.Data))
-		if endPos > w.meta.FileSize {
-			w.meta.FileSize = endPos
-		}
 	}
 
 	for _, id := range w.pendingDeleteSectors {
@@ -148,21 +151,28 @@ func (w *SectorWriter) Flush() error {
 		w.F.table: reqs,
 	}
 
-	_, err := w.F.db.BatchWriteItem(&dynamodb.BatchWriteItemInput{
+	t0 := time.Now()
+	resp, err := w.F.db.BatchWriteItem(&dynamodb.BatchWriteItemInput{
 		RequestItems: items,
 	})
-
 	if err != nil {
 		w.err = err
 		return err
 	}
 
+	if len(resp.UnprocessedItems) > 0 {
+		w.err = fmt.Errorf("unprocessed items: %v", resp.UnprocessedItems)
+	}
+
+	BatchWriteItemHist.Observe(time.Since(t0).Seconds())
+	BatchWriteItemCount.Add(float64(len(items)))
+
 	maps.Clear(w.pendingWriteSectors)
 	w.pendingDeleteSectors = w.pendingDeleteSectors[:0]
 
 	if !w.skipMetadataUpdates {
-		err = w.F.updateMeta(w.meta)
+		w.err = w.F.updateMeta(w.meta)
 	}
 
-	return nil
+	return w.err
 }

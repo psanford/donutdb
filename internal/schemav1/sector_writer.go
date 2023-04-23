@@ -1,6 +1,7 @@
 package schemav1
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -105,13 +106,19 @@ func (w *SectorWriter) Flush() error {
 		w.F.table: reqs,
 	}
 
-	_, err := w.F.db.BatchWriteItem(&dynamodb.BatchWriteItemInput{
+	resp, err := w.F.db.BatchWriteItem(&dynamodb.BatchWriteItemInput{
 		RequestItems: items,
 	})
 
 	if err != nil {
 		w.err = err
 		return err
+	}
+
+	if len(resp.UnprocessedItems) > 0 {
+		// we should retry these, but until we do we need to error
+		w.err = fmt.Errorf("unprocessed items: %v", resp.UnprocessedItems)
+		return w.err
 	}
 
 	w.pendingWriteSectors = w.pendingWriteSectors[:0]

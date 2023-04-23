@@ -2,6 +2,7 @@ package schemav2
 
 import (
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -10,10 +11,15 @@ import (
 )
 
 var zstdDecoder, _ = zstd.NewReader(nil)
+
 var uncompressFunc = func(in []byte, sectorSize int64) ([]byte, error) {
 	sectorData := make([]byte, 0, sectorSize)
 	return zstdDecoder.DecodeAll(in, sectorData)
 }
+
+// var uncompressFunc = func(in []byte, sectorSize int64) ([]byte, error) {
+// 	return in, nil
+// }
 
 func (f *File) getSectors(sectorIDs []string) ([]Sector, error) {
 	sectors := make(map[string]Sector)
@@ -21,10 +27,7 @@ func (f *File) getSectors(sectorIDs []string) ([]Sector, error) {
 	keys := make([]map[string]*dynamodb.AttributeValue, 0, len(sectorIDs))
 	for _, sectorID := range sectorIDs {
 
-		parts := strings.Split(sectorID, "__")
-		hash := parts[1]
-
-		cachedData := f.sectcache.Get(hash)
+		cachedData := f.sectcache.Get(sectorID)
 		if cachedData != nil {
 			sector := Sector{
 				Data:  cachedData,
@@ -66,11 +69,14 @@ func (f *File) getSectors(sectorIDs []string) ([]Sector, error) {
 			},
 		}
 
+		t0 := time.Now()
 		out, err := f.db.BatchGetItem(args)
-
 		if err != nil {
 			return nil, err
 		}
+
+		batchGetItemHist.Observe(float64(time.Since(t0).Seconds()))
+		batchGetItemCount.Add(float64(len(batchKeys)))
 
 		for _, item := range out.Responses[f.table] {
 			fullID := item[dynamo.HKey].S
@@ -90,9 +96,7 @@ func (f *File) getSectors(sectorIDs []string) ([]Sector, error) {
 			}
 			sectors[sectorID] = sector
 
-			idParts := strings.Split(sectorID, "__")
-			hash := idParts[1]
-			f.sectcache.Put(hash, sectorData)
+			f.sectcache.Put(sectorID, sectorData)
 		}
 		if len(out.UnprocessedKeys) > 0 {
 			keys = append(keys, out.UnprocessedKeys[f.table].Keys...)
