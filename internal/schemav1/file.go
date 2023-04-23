@@ -104,11 +104,20 @@ func (f *File) ReadAt(p []byte, off int64) (retN int, retErr error) {
 	iter := f.newSectorIterator(&sect, firstSector, lastSector, f.sectorSize)
 
 	var (
-		n         int
-		first     = true
-		iterCount int
+		n              int
+		first          = true
+		iterCount      int
+		prevSeenSize   = f.sectorSize
+		prevSeenOffset = int64(0)
 	)
 	for iter.Next() {
+		if prevSeenSize != f.sectorSize {
+			return n, fmt.Errorf("non-full sector detected in the middle of a file sector=%d size=%d", prevSeenOffset, prevSeenSize)
+		}
+
+		prevSeenSize = int64(len(sect.Data))
+		prevSeenOffset = sect.Offset
+
 		if first {
 			startIndex := off % f.sectorSize
 			n = copy(p, sect.Data[startIndex:])
