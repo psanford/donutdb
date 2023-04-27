@@ -166,7 +166,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, err
 			}
 
-			f, err := v.FileFromMeta(&meta)
+			f, err := v.fileFromMeta(&meta)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -177,7 +177,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 				return nil, 0, fmt.Errorf("decode file metadata err: %w", err)
 			}
 
-			f, err := v.FileFromMeta(&meta)
+			f, err := v.fileFromMeta(&meta)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -189,7 +189,7 @@ func (v *vfs) Open(name string, flags sqlite3vfs.OpenFlag) (retFile sqlite3vfs.F
 	return nil, flags, errors.New("failed to get/create file metadata too many times due to races")
 }
 
-func (v *vfs) FileFromMeta(meta *dynamo.FileMetaV1V2) (sqlite3vfs.File, error) {
+func (v *vfs) fileFromMeta(meta *dynamo.FileMetaV1V2) (sqlite3vfs.File, error) {
 	if meta.MetaVersion == 0 || meta.MetaVersion == 1 {
 		return schemav1.FileFromMeta(meta, v.table, v.ownerID, v.db, v.changeLogWriter)
 	} else if meta.MetaVersion == 2 {
@@ -280,7 +280,7 @@ func (v *vfs) Delete(name string, dirSync bool) (retErr error) {
 		return err
 	}
 
-	f, err := v.FileFromMeta(&meta)
+	f, err := v.fileFromMeta(&meta)
 	if err != nil {
 		return err
 	}
@@ -347,4 +347,32 @@ func (v *vfs) Access(name string, flag sqlite3vfs.AccessFlag) (retOk bool, retEr
 func (vfs *vfs) FullPathname(name string) string {
 	name = filepath.Clean(string(filepath.Separator) + name)
 	return name
+}
+
+func (v *vfs) LsFiles() ([]string, error) {
+	fileRow, err := v.db.GetItem(&dynamodb.GetItemInput{
+		TableName: &v.table,
+		Key: map[string]*dynamodb.AttributeValue{
+			dynamo.HKey: {
+				S: aws.String(dynamo.FileMetaKey),
+			},
+			dynamo.RKey: {
+				N: aws.String("0"),
+			},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]string, 0, len(fileRow.Item))
+	for k := range fileRow.Item {
+		if k == dynamo.HKey || k == dynamo.RKey {
+			continue
+		}
+
+		out = append(out, k)
+	}
+
+	return out, nil
 }
