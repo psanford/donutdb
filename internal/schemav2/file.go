@@ -482,7 +482,13 @@ func (f *File) currentMeta() (*dynamo.FileMetaV1V2, error) {
 	GetItemHist.Observe(float64(time.Since(t0).Seconds()))
 
 	var meta dynamo.FileMetaV1V2
-	err = json.Unmarshal([]byte(*existing.Item[f.rawName].S), &meta)
+
+	item := existing.Item[f.rawName]
+	if item == nil {
+		return nil, fmt.Errorf("file metadata not found for %q", f.rawName)
+	}
+
+	err = json.Unmarshal([]byte(*item.S), &meta)
 	if err != nil {
 		return nil, fmt.Errorf("decode file metadata err: %w", err)
 	}
