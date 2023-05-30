@@ -261,7 +261,6 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 
 	}
 
-	curSectorData := make([]byte, f.sectorSize)
 	posInFile := off
 
 	for len(b) > 0 {
@@ -273,7 +272,7 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 			dataForSector = len(b)
 		}
 
-		curSectorData = b[:dataForSector]
+		curSectorData := b[:dataForSector]
 		b = b[dataForSector:]
 
 		offsetIntoSector := int(posInFile % f.sectorSize)
@@ -309,7 +308,9 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 				f.sectorWriter.WriteSector(curSectorIdx, existingData)
 			}
 		} else {
-			f.sectorWriter.WriteSector(curSectorIdx, curSectorData)
+			copiedData := make([]byte, len(curSectorData))
+			copy(copiedData, curSectorData)
+			f.sectorWriter.WriteSector(curSectorIdx, copiedData)
 		}
 
 		writeCount += dataForSector
