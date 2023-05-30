@@ -201,6 +201,7 @@ func pushFileAction(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("Open file err: %s", err)
 	}
+	defer file.Close()
 
 	err = file.Truncate(0)
 	if err != nil {
@@ -218,6 +219,8 @@ func pushFileAction(cmd *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatalf("Failed to push file to dynamodb: %s", err)
 	}
+
+	w.File.Sync(0)
 
 	log.Printf("pushed %s to %s\n", srcFileName, dstFileName)
 }
