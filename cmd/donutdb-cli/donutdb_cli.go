@@ -162,7 +162,7 @@ func pullFileAction(cmd *cobra.Command, args []string) {
 		log.Fatalf("Copy dynamo file to local disk err: %s", err)
 	}
 
-	log.Printf("wrote %s\n", filename)
+	log.Printf("wrote %s\n", outFile.Name())
 }
 
 func pushFileCommand() *cobra.Command {
