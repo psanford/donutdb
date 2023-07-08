@@ -3,10 +3,12 @@ package dynamotest
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -32,9 +34,18 @@ func SetupDynamoServer() (*DynamoServerInfo, error) {
 	}
 
 	if dynamoLocalDir != "" {
-		log.Printf("Starting local dyamodb server")
-		cmd := exec.Command("java", "-Djava.library.path="+filepath.Join(dynamoLocalDir, "DynamoDBLocal_lib"), "-jar", filepath.Join(dynamoLocalDir, "DynamoDBLocal.jar"), "-sharedDb")
-		err := cmd.Start()
+		port := 8000
+
+		// get a random port to listen on
+		l, err := net.Listen("tcp", ":0")
+		if err == nil {
+			port = l.Addr().(*net.TCPAddr).Port
+			l.Close()
+		}
+
+		log.Printf("Starting local dyamodb server on %d", port)
+		cmd := exec.Command("java", "-Djava.library.path="+filepath.Join(dynamoLocalDir, "DynamoDBLocal_lib"), "-jar", filepath.Join(dynamoLocalDir, "DynamoDBLocal.jar"), "-sharedDb", "-inMemory", "-port", strconv.Itoa(port))
+		err = cmd.Start()
 		if err != nil {
 			return nil, err
 		}
@@ -43,7 +54,7 @@ func SetupDynamoServer() (*DynamoServerInfo, error) {
 		})
 
 		if info.Addr == "" {
-			info.Addr = "http://localhost:8000"
+			info.Addr = fmt.Sprintf("http://localhost:%d", port)
 		}
 		if info.Region == "" {
 			info.Region = "us-east-2"
