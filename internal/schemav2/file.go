@@ -318,11 +318,6 @@ func (f *File) WriteAt(b []byte, off int64) (n int, err error) {
 		curSectorIdx++
 	}
 
-	// err = f.sectorWriter.Flush()
-	// if err != nil {
-	// 	return 0, err
-	// }
-
 	return writeCount, nil
 }
 
@@ -409,13 +404,7 @@ func (f *File) Truncate(size int64) (retErr error) {
 		f.sectorWriter.DeleteSector(meta.Sectors[sectToDelete])
 	}
 
-	// err = f.sectorWriter.Flush()
-	// if err != nil {
-	// 	return err
-	// }
-
 	meta.FileSize = size
-	// return f.updateMeta(meta)
 	return nil
 }
 
